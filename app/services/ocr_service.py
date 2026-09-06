@@ -1,0 +1,111 @@
+from io import BytesIO
+
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+
+
+def _prepare_variants(image):
+    """Create readable label crops without changing the source image."""
+    width, height = image.size
+    crops = [
+        image,
+        image.crop((0, 0, int(width * 0.58), height)),
+        image.crop((0, int(height * 0.25), int(width * 0.62), height)),
+    ]
+    variants = []
+    for crop in crops:
+        gray = ImageOps.grayscale(crop)
+        enlarged = gray.resize(
+            (gray.width * 3, gray.height * 3),
+            Image.Resampling.LANCZOS,
+        )
+        contrasted = ImageOps.autocontrast(enlarged)
+        sharpened = contrasted.filter(ImageFilter.SHARPEN)
+        variants.extend([
+            sharpened,
+            ImageEnhance.Contrast(sharpened).enhance(1.8),
+            sharpened.point(lambda value: 255 if value > 165 else 0),
+        ])
+    return variants
+
+
+def _read_variant(pytesseract, image, mode):
+    data = pytesseract.image_to_data(
+        image,
+        config=f"--oem 3 --psm {mode}",
+        output_type=pytesseract.Output.DICT,
+    )
+    lines = {}
+    confidences = []
+    for index, raw_text in enumerate(data["text"]):
+        text = raw_text.strip()
+        if not text:
+            continue
+        try:
+            confidence = float(data["conf"][index])
+        except (TypeError, ValueError):
+            confidence = -1
+        if confidence >= 0:
+            confidences.append(confidence)
+        key = (
+            data["block_num"][index],
+            data["par_num"][index],
+            data["line_num"][index],
+        )
+        lines.setdefault(key, []).append(text)
+
+    return {
+        "text": "\n".join(" ".join(words) for words in lines.values()),
+        "confidence": round(sum(confidences) / len(confidences), 2)
+        if confidences
+        else None,
+        "word_count": sum(len(words) for words in lines.values()),
+    }
+
+
+def _merge_candidates(candidates):
+    unique_lines = []
+    seen = set()
+    for candidate in sorted(
+        candidates,
+        key=lambda item: item["confidence"] or 0,
+        reverse=True,
+    ):
+        for line in candidate["text"].splitlines():
+            normalized = " ".join(line.lower().split())
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                unique_lines.append(line.strip())
+    confidence_values = [
+        item["confidence"]
+        for item in candidates
+        if item["confidence"] is not None
+    ]
+    return {
+        "text": "\n".join(unique_lines),
+        "confidence": round(sum(confidence_values) / len(confidence_values), 2)
+        if confidence_values
+        else None,
+        "variants_used": len(candidates),
+    }
+
+
+def extract_text(image_bytes: bytes) -> dict:
+    """Extract reconstructed label text from full-frame and focused crops."""
+    try:
+        import pytesseract
+    except ImportError as error:
+        raise RuntimeError(
+            "OCR is unavailable; install the backend requirements"
+        ) from error
+
+    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    candidates = []
+    for variant in _prepare_variants(image):
+        for mode in (6, 11, 12):
+            result = _read_variant(pytesseract, variant, mode)
+            if result["word_count"] >= 2:
+                candidates.append(result)
+
+    if not candidates:
+        return {"text": "", "confidence": None, "variants_used": 0}
+    return _merge_candidates(candidates)
