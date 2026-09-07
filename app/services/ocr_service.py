@@ -3,7 +3,7 @@ from io import BytesIO
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 
-MAX_OCR_SOURCE_PIXELS = 2_500_000
+MAX_OCR_SOURCE_PIXELS = 1_500_000
 
 
 def _resize_for_ocr(image):
@@ -25,8 +25,7 @@ def _prepare_variants(image):
     width, height = image.size
     crops = [
         image,
-        image.crop((0, 0, int(width * 0.58), height)),
-        image.crop((0, int(height * 0.25), int(width * 0.62), height)),
+        image.crop((0, int(height * 0.2), width, height)),
     ]
     variants = []
     for crop in crops:
@@ -114,7 +113,7 @@ def extract_text(image_bytes: bytes) -> dict:
     image = Image.open(BytesIO(image_bytes)).convert("RGB")
     candidates = []
     for variant in _prepare_variants(image):
-        for mode in (6, 11):
+        for mode in (6,):
             result = _read_variant(pytesseract, variant, mode)
             if result["word_count"] >= 2:
                 candidates.append(result)

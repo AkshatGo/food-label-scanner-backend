@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -22,6 +23,8 @@ from ..services.pdf_service import create_report_pdf
 
 
 router = APIRouter(prefix="/api/v1", tags=["Scan"])
+logger = logging.getLogger(__name__)
+_background_scan_tasks = set()
 
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
@@ -87,7 +90,16 @@ def validate_image(file: UploadFile, image_bytes: bytes):
     return detected_type
 
 
-@router.post("/scan")
+def _record_background_scan_result(task):
+    """Keep task failures visible without leaving completed tasks retained."""
+    _background_scan_tasks.discard(task)
+    try:
+        task.result()
+    except Exception:
+        logger.exception("Background scan processing failed")
+
+
+@router.post("/scan", status_code=202)
 async def scan_product(file: UploadFile = File(...)):
     """
     Upload an image and process it.
@@ -114,17 +126,27 @@ async def scan_product(file: UploadFile = File(...)):
         + uuid4().hex[:6]
     )
 
-    # All heavy/blocking processing is executed in a worker thread.
-    result = await asyncio.to_thread(
-        _process_scan,
-        image_bytes,
-        file.filename,
-        content_type,
-        scan_id,
-        started_at,
+    # OCR and PDF work can take longer than a browser/proxy request. Run it in
+    # the background and let clients retrieve the completed scan by its ID.
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            _process_scan,
+            image_bytes,
+            file.filename,
+            content_type,
+            scan_id,
+            started_at,
+        )
     )
+    _background_scan_tasks.add(task)
+    task.add_done_callback(_record_background_scan_result)
 
-    return _json_safe(result)
+    return {
+        "success": True,
+        "scan_id": scan_id,
+        "message": "Image accepted for analysis",
+        "processing": {"status": "processing"},
+    }
 
 
 def _process_scan(
