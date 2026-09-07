@@ -3,8 +3,25 @@ from io import BytesIO
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 
+MAX_OCR_SOURCE_PIXELS = 2_500_000
+
+
+def _resize_for_ocr(image):
+    """Bound OCR work for high-resolution photos taken on mobile devices."""
+    pixel_count = image.width * image.height
+    if pixel_count <= MAX_OCR_SOURCE_PIXELS:
+        return image
+
+    scale = (MAX_OCR_SOURCE_PIXELS / pixel_count) ** 0.5
+    return image.resize(
+        (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
+        Image.Resampling.LANCZOS,
+    )
+
+
 def _prepare_variants(image):
     """Create readable label crops without changing the source image."""
+    image = _resize_for_ocr(image)
     width, height = image.size
     crops = [
         image,
@@ -15,16 +32,12 @@ def _prepare_variants(image):
     for crop in crops:
         gray = ImageOps.grayscale(crop)
         enlarged = gray.resize(
-            (gray.width * 3, gray.height * 3),
+            (gray.width * 2, gray.height * 2),
             Image.Resampling.LANCZOS,
         )
         contrasted = ImageOps.autocontrast(enlarged)
         sharpened = contrasted.filter(ImageFilter.SHARPEN)
-        variants.extend([
-            sharpened,
-            ImageEnhance.Contrast(sharpened).enhance(1.8),
-            sharpened.point(lambda value: 255 if value > 165 else 0),
-        ])
+        variants.append(ImageEnhance.Contrast(sharpened).enhance(1.8))
     return variants
 
 
@@ -101,7 +114,7 @@ def extract_text(image_bytes: bytes) -> dict:
     image = Image.open(BytesIO(image_bytes)).convert("RGB")
     candidates = []
     for variant in _prepare_variants(image):
-        for mode in (6, 11, 12):
+        for mode in (6, 11):
             result = _read_variant(pytesseract, variant, mode)
             if result["word_count"] >= 2:
                 candidates.append(result)
