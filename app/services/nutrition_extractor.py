@@ -1,0 +1,203 @@
+"""Nutrition extraction from OCR text with per-100g/100ml normalization.
+
+Implements doc 04 §6.1 — the #1 flagged pitfall: nutrition declared per
+serving (e.g. "per 30g pack") MUST be normalized to per-100g/100ml before
+scoring. Also surfaces low-confidence values for user review rather than
+silently feeding a health formula (doc 01 §8.2, doc 05 §3).
+"""
+
+import re
+
+# Explicit alias lists per canonical field (longest match wins).
+FIELD_ALIASES = [
+    ("added_sugar_g", ["added sugars", "added sugar", "added sucrose"]),
+    ("total_sugar_g", ["total sugars", "total sugar", "of which sugars", "sugars", "sugar"]),
+    ("carbohydrate_g", ["total carbohydrate", "total carbohydrates", "carbohydrate", "carbohydrates", "carbs"]),
+    ("saturated_fat_g", ["saturated fat", "sat fat"]),
+    ("trans_fat_g", ["trans fat"]),
+    ("total_fat_g", ["total fat", "fat"]),
+    ("energy_kcal", ["energy (kcal)", "energy kcal", "energy", "calories", "calorie", "cal"]),
+    ("protein_g", ["protein"]),
+    ("sodium_mg", ["sodium", "na"]),
+    ("fibre_g", ["dietary fibre", "dietary fiber", "fibre", "fiber"]),
+    ("cholesterol_mg", ["cholesterol"]),
+]
+
+_ALTERNATION = "|".join(
+    re.escape(alias) for alias, _field in sorted(
+        ((alias, field) for field, aliases in FIELD_ALIASES for alias in aliases),
+        key=lambda pair: -len(pair[0]),
+    )
+)
+
+_ROW_RE = re.compile(
+    r"^\s*(" + _ALTERNATION + r")\s*(?:\([^)]{0,40}\))?\s*[:=\-]?\s*"
+    r"(?:approx\.?\s*)?(?:less\s+than\s+)?(\d+(?:\.\d+)?)\s*(kcal|kj|mcg|ug|mg|g|iu)?",
+    re.IGNORECASE,
+)
+
+_FIELD_LOOKUP = {
+    alias: field
+    for field, aliases in FIELD_ALIASES
+    for alias in aliases
+}
+
+_SERVING_RE = re.compile(
+    r"per\s+(?:serving|pack|packet|sachet|cup|portion|container)\s*"
+    r"(?:of\s*)?[\(\[]?\s*(\d+(?:\.\d+)?)\s*(g|kg|ml|l)\s*[\)\]]?",
+    re.IGNORECASE,
+)
+_PER100_RE = re.compile(r"per\s*100\s*(g|ml)", re.IGNORECASE)
+
+_DEFAULT_UNITS = {
+    "energy_kcal": "kcal", "protein_g": "g", "carbohydrate_g": "g",
+    "total_sugar_g": "g", "added_sugar_g": "g", "total_fat_g": "g",
+    "saturated_fat_g": "g", "trans_fat_g": "g", "sodium_mg": "mg",
+    "fibre_g": "g", "cholesterol_mg": "mg",
+}
+_GRAM_FIELDS = {field for field, unit in _DEFAULT_UNITS.items() if unit == "g"}
+
+
+def _coerce_ocr_number(value_str, context):
+    """Undo Tesseract's common g->9 substitution in nutrition rows."""
+    if not re.search(r"\b(?:g|gram|grams|mg)\b", context, re.IGNORECASE):
+        if value_str.endswith(".59"):
+            return value_str[:-1]
+        if value_str.endswith("9") and len(value_str) > 1 and "." not in value_str:
+            return value_str[:-1]
+    return value_str
+
+
+def _extract_rows(text):
+    """Pull (canonical_field, value, unit) tuples from nutrition rows."""
+    rows = []
+    seen = set()
+    for line in (text or "").splitlines():
+        match = _ROW_RE.search(line)
+        if not match:
+            continue
+        label = re.sub(r"\s+", " ", match.group(1).lower().strip())
+        canonical = _FIELD_LOOKUP.get(label)
+        if canonical is None or canonical in seen:
+            continue
+        seen.add(canonical)
+
+        value_str = _coerce_ocr_number(match.group(2), line)
+        value = float(value_str)
+        unit = (match.group(3) or "").lower()
+
+        # Unit normalization
+        if canonical == "energy_kcal" and unit == "kj":
+            value /= 4.184
+            unit = "kcal"
+        elif canonical != "energy_kcal" and unit == "kj":
+            value /= 1000.0
+            unit = "g"
+        elif unit == "mg" and canonical in _GRAM_FIELDS:
+            value /= 1000.0
+            unit = "g"
+        elif unit == "g" and canonical not in _GRAM_FIELDS:
+            value *= 1000.0
+            unit = "mg"
+        elif not unit:
+            unit = _DEFAULT_UNITS[canonical]
+
+        rows.append((canonical, round(value, 2), unit))
+    return rows
+
+
+def _detect_basis(text):
+    """Detect whether values are per-100g/ml or per-serving."""
+    per100 = _PER100_RE.search(text)
+    if per100:
+        return {"basis": "per_100", "unit": per100.group(1).lower(), "serving_size": None}
+    serving = _SERVING_RE.search(text)
+    if serving:
+        size = float(serving.group(1))
+        unit = serving.group(2).lower()
+        if unit == "kg":
+            size *= 1000
+            unit = "g"
+        elif unit == "l":
+            size *= 1000
+            unit = "ml"
+        return {"basis": "per_serving", "unit": unit, "serving_size": size}
+    return {"basis": "unknown", "unit": None, "serving_size": None}
+
+
+def extract_nutrition(text):
+    """Extract nutrition from OCR text, normalized to per-100g/100ml.
+
+    Returns dict:
+        values: {field: {value, unit}} — normalized per-100
+        basis: per_100 | per_serving | unknown
+        normalized_to_per_100: bool (True if a per-serving -> per-100 conversion ran)
+        needs_review: bool (basis unknown -> values flagged, never silent)
+        serving_size: grams/ml when per-serving detected
+    """
+    rows = _extract_rows(text)
+    basis_info = _detect_basis(text)
+
+    values = {
+        field: {"value": value, "unit": unit}
+        for field, value, unit in rows
+    }
+
+    normalized = False
+    factor = 1.0
+    if basis_info["basis"] == "per_serving" and basis_info["serving_size"]:
+        size = basis_info["serving_size"]
+        if size > 0:
+            factor = 100.0 / size
+            if abs(factor - 1.0) > 1e-9:
+                normalized = True
+                for entry in values.values():
+                    entry["value"] = round(entry["value"] * factor, 2)
+
+    needs_review = basis_info["basis"] == "unknown" and bool(values)
+
+    note = "Values read on a per-100g/100ml basis."
+    if normalized:
+        note = (
+            "Nutrition values normalized from per-serving to per-100g/100ml "
+            "before scoring (doc 04 §6.1)."
+        )
+    elif needs_review:
+        note = (
+            "Nutrition basis could not be confirmed as per-100g/100ml; "
+            "values flagged for user review before trusting a health formula."
+        )
+
+    return {
+        "values": values,
+        "basis": basis_info["basis"],
+        "basis_unit": basis_info["unit"],
+        "serving_size": basis_info["serving_size"],
+        "normalized_to_per_100": normalized,
+        "normalization_factor": round(factor, 4),
+        "needs_review": needs_review,
+        "note": note,
+    }
+
+
+def to_inr_input(nutrition):
+    """Map extracted nutrition to the INR engine's input shape."""
+    values = nutrition.get("values", {})
+
+    def get(field):
+        entry = values.get(field)
+        return entry["value"] if entry else None
+
+    return {
+        "energy_kcal": get("energy_kcal"),
+        "protein_g": get("protein_g"),
+        "carbohydrate_g": get("carbohydrate_g"),
+        "total_sugars_g": get("total_sugar_g"),
+        "added_sugar_g": get("added_sugar_g"),
+        "total_fat_g": get("total_fat_g"),
+        "saturated_fat_g": get("saturated_fat_g"),
+        "trans_fat_g": get("trans_fat_g"),
+        "sodium_mg": get("sodium_mg"),
+        "dietary_fiber_g": get("fibre_g"),
+        "cholesterol_mg": get("cholesterol_mg"),
+    }

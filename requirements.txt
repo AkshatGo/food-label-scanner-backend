@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pymongo
+python-dotenv
+certifi
+python-multipart
+Pillow
+pytesseract
+reportlab
+PyJWT
+httpx
+httpx2
+pytest
