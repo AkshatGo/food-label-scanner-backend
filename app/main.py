@@ -1,10 +1,12 @@
 """LabelLens API entrypoint."""
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import config
 from .api.routes import router
@@ -32,6 +34,9 @@ app.add_middleware(
 
 app.include_router(router)
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
@@ -53,6 +58,11 @@ def root():
         "version": "1.0.0",
         "docs": "/docs",
     }
+
+
+@app.get("/ui", include_in_schema=False)
+def web_app():
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/health")

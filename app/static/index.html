@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f4ee">
+  <title>LabelLens — Know what’s inside</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <a class="brand" href="#overview" aria-label="LabelLens home">
+        <span class="brand-mark"><span></span></span>
+        <span>LabelLens</span>
+      </a>
+      <nav>
+        <button class="nav-item active" data-view="overview"><span class="nav-icon">⌂</span>Overview</button>
+        <button class="nav-item" data-view="scan"><span class="nav-icon">⌗</span>Scan a label</button>
+        <button class="nav-item" data-view="compare"><span class="nav-icon">⇄</span>Compare</button>
+        <button class="nav-item" data-view="history"><span class="nav-icon">◷</span>History</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="trust-card">
+          <div class="trust-icon">✓</div>
+          <strong>Transparent by design</strong>
+          <p>Every rating is backed by the FSSAI INR formula.</p>
+        </div>
+        <button class="account-button" id="accountButton">
+          <span class="avatar" id="avatar">LL</span>
+          <span><strong id="accountName">Your profile</strong><small id="accountHint">Sign in to personalize</small></span>
+          <span>›</span>
+        </button>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <button class="mobile-menu" id="mobileMenu" aria-label="Open menu">☰</button>
+        <div class="status-pill"><i></i> FSSAI rules engine online</div>
+        <button class="profile-shortcut" id="profileShortcut">Health preferences <span>→</span></button>
+      </header>
+
+      <section class="view active" id="overviewView">
+        <div class="hero">
+          <div>
+            <span class="eyebrow">Food clarity, in seconds</span>
+            <h1>Know what’s really<br>inside your food.</h1>
+            <p>Scan any packaged food label to decode nutrition, understand ingredients, and get guidance shaped around you.</p>
+            <button class="primary-button" data-go="scan">Scan your first label <span>→</span></button>
+          </div>
+          <div class="hero-visual" aria-hidden="true">
+            <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+            <div class="scan-card-demo">
+              <div class="demo-top"><span class="mini-logo"></span><span>ANALYSIS COMPLETE</span></div>
+              <h3>Whole Grain Cereal</h3><small>Nutrition per 100g</small>
+              <div class="score-ring"><strong>4.0</strong><span>★</span></div>
+              <div class="demo-bars"><i style="--w:72%"></i><i style="--w:43%"></i><i style="--w:58%"></i></div>
+              <div class="demo-good">✓ A better everyday choice</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-heading"><div><span class="eyebrow">How it works</span><h2>From label to clarity</h2></div><p>No black-box verdicts. Just transparent, traceable analysis.</p></div>
+        <div class="feature-grid">
+          <article><span class="feature-num">01</span><div class="feature-icon coral">⌗</div><h3>Capture the label</h3><p>Upload clear photos of the front and back of your food package.</p></article>
+          <article><span class="feature-num">02</span><div class="feature-icon yellow">◎</div><h3>We decode it</h3><p>OCR reads the nutrition panel, ingredients, allergens and declarations.</p></article>
+          <article><span class="feature-num">03</span><div class="feature-icon green">✦</div><h3>See what matters</h3><p>Get an FSSAI-based star rating and transparent personalized guidance.</p></article>
+        </div>
+
+        <div class="recent-block">
+          <div class="section-heading compact"><div><span class="eyebrow">Your library</span><h2>Recent scans</h2></div><button class="text-button" data-go="history">View all →</button></div>
+          <div id="recentScans" class="empty-state"><span>⌗</span><strong>No labels scanned yet</strong><p>Your latest products will appear here.</p><button class="secondary-button" data-go="scan">Start scanning</button></div>
+        </div>
+      </section>
+
+      <section class="view" id="scanView">
+        <div class="page-title"><div><span class="eyebrow">New analysis</span><h1>Scan a food label</h1><p>Use clear, well-lit photos with the full label visible.</p></div><span class="step-indicator">2 required photos</span></div>
+        <form id="scanForm">
+          <div class="upload-grid">
+            <label class="upload-zone" id="frontZone"><input type="file" id="frontImage" accept="image/png,image/jpeg,image/webp" required><span class="upload-art">＋</span><strong>Front of package</strong><p>Product name and main display panel</p><small>PNG, JPG or WEBP · max 10 MB</small><img alt="Front label preview"></label>
+            <label class="upload-zone" id="backZone"><input type="file" id="backImage" accept="image/png,image/jpeg,image/webp" required><span class="upload-art">＋</span><strong>Back of package</strong><p>Ingredients and nutrition information</p><small>PNG, JPG or WEBP · max 10 MB</small><img alt="Back label preview"></label>
+            <label class="upload-zone optional" id="nutritionZone"><input type="file" id="nutritionImage" accept="image/png,image/jpeg,image/webp"><span class="optional-tag">Optional</span><span class="upload-art">＋</span><strong>Nutrition close-up</strong><p>Add this if the panel is hard to read</p><small>PNG, JPG or WEBP · max 10 MB</small><img alt="Nutrition label preview"></label>
+          </div>
+          <div class="scan-tips"><strong>For the best result</strong><span>☀ Use even lighting</span><span>▣ Keep text in focus</span><span>↔ Capture the full panel</span></div>
+          <button class="primary-button submit-scan" type="submit" disabled>Analyze label <span>→</span></button>
+        </form>
+        <div class="processing-card hidden" id="processingCard"><div class="scanner-animation"><span></span></div><div><span class="eyebrow">Reading your label</span><h2 id="processingTitle">Extracting product details…</h2><p id="processingText">Our OCR is identifying nutrition values and ingredients.</p></div><div class="progress"><i></i></div></div>
+        <div id="resultPanel" class="hidden"></div>
+      </section>
+
+      <section class="view" id="compareView">
+        <div class="page-title"><div><span class="eyebrow">Side by side</span><h1>Compare products</h1><p>See which option better fits what matters to you.</p></div></div>
+        <div class="compare-picker"><label>First product<select id="compareA"></select></label><span>VS</span><label>Second product<select id="compareB"></select></label><button class="primary-button" id="compareButton">Compare now</button></div>
+        <div id="compareResult" class="empty-state"><span>⇄</span><strong>Choose two scanned products</strong><p>Comparisons use the same FSSAI formula for an honest side-by-side view.</p></div>
+      </section>
+
+      <section class="view" id="historyView">
+        <div class="page-title"><div><span class="eyebrow">Saved locally</span><h1>Scan history</h1><p>Products analyzed in this browser session.</p></div><button class="secondary-button" id="clearHistory">Clear history</button></div>
+        <div id="historyGrid" class="history-grid"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="authModal">
+    <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+      <button class="modal-close" data-close="authModal">×</button>
+      <div class="modal-brand"><span class="brand-mark"><span></span></span></div>
+      <span class="eyebrow">Make it personal</span><h2 id="authTitle">Welcome to LabelLens</h2><p>Sign in to save health preferences and unlock tailored guidance.</p>
+      <div class="auth-tabs"><button class="active" data-auth="login">Sign in</button><button data-auth="signup">Create account</button></div>
+      <form id="authForm"><label>Email address<input type="email" id="authEmail" placeholder="you@example.com" required></label><label>Password<input type="password" id="authPassword" placeholder="At least 8 characters" minlength="8" required></label><button class="primary-button" id="authSubmit" type="submit">Sign in <span>→</span></button></form>
+      <p class="form-message" id="authMessage"></p>
+      <button class="guest-button" data-close="authModal">Continue as guest</button>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="profileModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
+      <button class="modal-close" data-close="profileModal">×</button><span class="eyebrow">Personalization</span><h2 id="profileTitle">Health preferences</h2><p>Select the considerations you want LabelLens to use. These provide guidance, not medical advice.</p>
+      <div class="condition-grid" id="conditionGrid">
+        <label><input type="checkbox" value="sugar"><span><b>Low sugar</b><small>Watch added and total sugars</small></span></label>
+        <label><input type="checkbox" value="diabetes"><span><b>Diabetes</b><small>Review sugars, fibre and sodium</small></span></label>
+        <label><input type="checkbox" value="migraine"><span><b>Migraine</b><small>Flag common ingredient triggers</small></span></label>
+        <label><input type="checkbox" value="fever"><span><b>Recovery</b><small>Watch sodium and saturated fat</small></span></label>
+      </div>
+      <button class="primary-button full" id="saveConditions">Save preferences</button><p class="form-message" id="profileMessage"></p>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
