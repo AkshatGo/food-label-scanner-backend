@@ -416,6 +416,34 @@ function rating(p) {
       ? "Review needed"
       : "Not rated";
 }
+// Draft INR rating as a 0-10 half-star level, or null when the rating must
+// not be displayed (review needed / not eligible / missing).
+function meterLevel(p) {
+  if (!trustworthy(p) || typeof p.inr.rating_stars !== "number") return null;
+  return Math.max(0, Math.min(10, Math.round(p.inr.rating_stars * 2)));
+}
+const STAR_PATH =
+  "M10 1.2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L10 13.6l-4.8 2.5.9-5.4L2.2 6.9l5.4-.8z";
+function meterStars(level, extraClass = "") {
+  const fill = level * 10;
+  const star = (i) =>
+    `<span class="star">`
+    + `<svg class="bg" viewBox="0 0 20 20" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`
+    + (i < level
+        ? `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`
+        : i === level
+          ? `<span class="fg"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="${STAR_PATH}"/></svg></span>`
+          : "")
+    + `</span>`;
+  return `<span class="meter-stars p${level * 10} ${extraClass}" role="img" aria-label="${fill}% of 5 stars">`
+    + Array.from({ length: 5 }, (_, i) => star(i)).join("")
+    + `</span>`;
+}
+function ratingBadge(p) {
+  const level = meterLevel(p);
+  if (level === null) return `<span class="score-chip">${esc(rating(p))}</span>`;
+  return `<span class="score-chip meter-chip">${meterStars(level)}<span>${esc(p.inr.rating_stars)}/5</span></span>`;
+}
 function productCard(p) {
   const date = p.created_at
     ? new Date(p.created_at).toLocaleDateString(undefined, {
@@ -423,7 +451,7 @@ function productCard(p) {
         month: "short",
       })
     : "";
-  return `<button class="product-card" data-product="${esc(p.product_id)}"><div class="product-card-top"><img class="product-thumb" loading="lazy" src="/api/v1/scan/${encodeURIComponent(p.scan_id)}/image/front" alt=""><span class="score-chip">${esc(rating(p))}</span></div><h3>${esc(p.product_name)}</h3><p>${esc(p.brand || "Brand not read")}</p><div class="product-card-foot"><span>${esc(date)}</span><span>Read label ↗</span></div></button>`;
+  return `<button class="product-card" data-product="${esc(p.product_id)}"><div class="product-card-top"><img class="product-thumb" loading="lazy" src="/api/v1/scan/${encodeURIComponent(p.scan_id)}/image/front" alt="">${ratingBadge(p)}</div><h3>${esc(p.product_name)}</h3><p>${esc(p.brand || "Brand not read")}</p><div class="product-card-foot"><span>${esc(date)}</span><span>Read label ↗</span></div></button>`;
 }
 function emptyShelf() {
   return `<div class="empty-shelf"><span>${icon("book")}</span><div><h3>${state.user ? "Your next discovery goes here." : "A shelf for your everyday discoveries."}</h3><p>${state.user ? "Scan your first label to start a personal food library." : "Sign in to save labels and pick up where you left off."}</p></div><button class="text-button" ${state.user ? 'data-view="scan"' : "data-signin"}>${state.user ? "Scan a label ↗" : "Make it yours ↗"}</button></div>`;
@@ -526,8 +554,9 @@ async function openProduct(id) {
       .map((i) => `<span>${esc(typeof i === "string" ? i : i.name)}</span>`)
       .join("") || "<p>No ingredients were confidently read.</p>";
   const counts = p.compliance?.summary?.declarations || {};
+  const meter = meterLevel(p);
   $("#productResult").innerHTML =
-    `<div class="result-heading"><div><span class="eyebrow">YOUR LABEL, DECODED</span><h1>${esc(p.product_name)}</h1><p>${esc(p.brand || "Brand not read")} · ${esc(p.net_quantity || "Pack size not read")}</p></div><div class="result-score"><strong>${trustworthy(p) ? esc(p.inr.rating_stars) : "—"}</strong><small>${trustworthy(p) ? "OUT OF 5 · DRAFT INR" : review ? "VERIFY LABEL" : "NOT RATED"}</small></div></div>${review ? `<div class="review-notice"><strong>Check these readings against the pack.</strong><ul>${(p.review_reasons?.length ? p.review_reasons : ["Incomplete readings: the rating is withheld until values can be verified."]).map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>` : ""}<div class="result-columns"><div><section class="reading-block"><h2>The nutrition panel</h2><p>Per ${p.category === "II" ? "100ml" : "100g"} · ${esc(p.nutrition_extraction?.basis || "Basis not read")}</p><table class="nutrition-table"><tbody>${nutrients.map(([key, label, unit]) => `<tr><td>${label}</td><td>${value(nutrition[key], unit)}</td></tr>`).join("")}</tbody></table></section><section class="reading-block"><h2>Inside the ingredients</h2><div class="ingredient-tags">${ingredients}</div><p>Allergens detected: ${esc((p.allergens?.detected || []).join(", ") || "None detected — this does not establish allergen safety.")}</p></section></div><div><section class="reading-block"><h2>In your context</h2><div id="guidanceResult">Loading your preferences…</div></section><section class="reading-block"><h2>The label checklist</h2><div class="compliance-counts">${Object.entries(
+    `<div class="result-heading"><div><span class="eyebrow">YOUR LABEL, DECODED</span><h1>${esc(p.product_name)}</h1><p>${esc(p.brand || "Brand not read")} · ${esc(p.net_quantity || "Pack size not read")}</p></div><div class="result-score"><strong>${trustworthy(p) ? esc(p.inr.rating_stars) : "—"}</strong>${meter !== null ? meterStars(meter, "result-meter") : ""}<small>${trustworthy(p) ? "OUT OF 5 · DRAFT INR" : review ? "VERIFY LABEL" : "NOT RATED"}</small></div></div>${review ? `<div class="review-notice"><strong>Check these readings against the pack.</strong><ul>${(p.review_reasons?.length ? p.review_reasons : ["Incomplete readings: the rating is withheld until values can be verified."]).map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>` : ""}<div class="result-columns"><div><section class="reading-block"><h2>The nutrition panel</h2><p>Per ${p.category === "II" ? "100ml" : "100g"} · ${esc(p.nutrition_extraction?.basis || "Basis not read")}</p><table class="nutrition-table"><tbody>${nutrients.map(([key, label, unit]) => `<tr><td>${label}</td><td>${value(nutrition[key], unit)}</td></tr>`).join("")}</tbody></table></section><section class="reading-block"><h2>Inside the ingredients</h2><div class="ingredient-tags">${ingredients}</div><p>Allergens detected: ${esc((p.allergens?.detected || []).join(", ") || "None detected — this does not establish allergen safety.")}</p></section></div><div><section class="reading-block"><h2>In your context</h2><div id="guidanceResult">Loading your preferences…</div></section><section class="reading-block"><h2>The label checklist</h2><div class="compliance-counts">${Object.entries(
       counts,
     )
       .map(
