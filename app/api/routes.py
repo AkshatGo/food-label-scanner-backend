@@ -20,10 +20,12 @@ import asyncio
 import logging
 import re
 import secrets
+from io import BytesIO
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, Request
 from fastapi.responses import Response
+from PIL import Image, UnidentifiedImageError
 
 from .. import config
 from ..database import store
@@ -39,6 +41,7 @@ from ..services.scan_pipeline import run_scan_pipeline
 router = APIRouter(prefix="/api/v1", tags=["LabelLens"])
 logger = logging.getLogger(__name__)
 _background_tasks = set()
+_scan_slots = asyncio.Semaphore(2)
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 
@@ -54,7 +57,8 @@ def _error(code, message, http_status):
     )
 
 
-async def _current_user(authorization: str = Header(default=None)):
+async def _current_user(request: Request, authorization: str = Header(default=None)):
+    authorization = authorization or request.cookies.get("ll_session")
     if not authorization:
         raise _error("UNAUTHORIZED", "Missing Authorization header", 401)
     token = authorization.removeprefix("Bearer ").strip()
@@ -85,6 +89,13 @@ def _validate_image(file: UploadFile, image_bytes: bytes):
     supplied = (file.content_type or "").lower()
     if supplied not in ("", "application/octet-stream", detected):
         raise _error("INVALID_IMAGE", "The uploaded file type does not match its content", 415)
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            if image.width * image.height > 25_000_000:
+                raise _error("INVALID_IMAGE", "Photo exceeds 25 megapixels. Use a smaller image.", 413)
+            image.verify()
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as error:
+        raise _error("INVALID_IMAGE", "This image cannot be decoded. Please upload another photo.", 400) from error
     return detected
 
 
@@ -98,15 +109,15 @@ def _json_safe(value):
     return str(value)
 
 
-def _find_scan(scan_id):
-    scan = store.scans.find_one({"scan_id": scan_id})
+def _find_scan(scan_id, user):
+    scan = store.scans.find_one({"scan_id": scan_id, "user_id": user["user_id"]})
     if not scan:
         raise _error("NOT_FOUND", f"Scan {scan_id} not found", 404)
     return scan
 
 
-def _find_product(product_id):
-    product = store.products.find_one({"product_id": product_id})
+def _find_product(product_id, user):
+    product = store.products.find_one({"product_id": product_id, "user_id": user["user_id"]})
     if not product:
         raise _error("NOT_FOUND", f"Product {product_id} not found", 404)
     return product
@@ -117,19 +128,76 @@ def _find_product(product_id):
 # --------------------------------------------------------------------------
 
 @router.post("/auth/signup", status_code=201)
-def auth_signup(body: dict):
+def auth_signup(body: dict, response: Response):
     try:
-        return signup(body.get("email"), body.get("password"))
+        result = signup(body.get("email"), body.get("password"))
+        _set_session(response, result["token"])
+        return result
     except AuthError as error:
         raise _error(error.code, error.message, error.http_status) from error
 
 
 @router.post("/auth/login")
-def auth_login(body: dict):
+def auth_login(body: dict, response: Response):
     try:
-        return login(body.get("email"), body.get("password"))
+        result = login(body.get("email"), body.get("password"))
+        _set_session(response, result["token"])
+        return result
     except AuthError as error:
         raise _error(error.code, error.message, error.http_status) from error
+
+
+def _set_session(response, token):
+    response.set_cookie("ll_session", token, httponly=True, secure=config.PRODUCTION,
+                        samesite="strict", max_age=config.JWT_EXPIRY_HOURS * 3600, path="/")
+
+
+@router.post("/auth/logout")
+def auth_logout(response: Response, user=Depends(_current_user)):
+    store.users.update_one({"user_id": user["user_id"]},
+                           {"$set": {"token_version": user.get("token_version", 0) + 1}})
+    response.delete_cookie("ll_session", path="/")
+    return {"message": "Signed out"}
+
+
+@router.get("/auth/me")
+def auth_me(user=Depends(_current_user)):
+    return {key: user.get(key) for key in ("user_id", "email", "conditions")}
+
+
+@router.get("/account/export")
+def export_account(user=Depends(_current_user)):
+    return {"account": {key: user.get(key) for key in ("email", "conditions", "created_at")},
+            "products": [_json_safe({k: v for k, v in p.items() if k != "_id"})
+                         for p in store.products.find({"user_id": user["user_id"]})]}
+
+
+@router.delete("/account")
+def delete_account(body: dict, response: Response, user=Depends(_current_user)):
+    from ..services.auth_service import _verify_password
+    password = body.get("password")
+    if not isinstance(password, str) or len(password) > 128 or not _verify_password(password, user["auth_hash"]):
+        raise _error("UNAUTHORIZED", "Confirm your password to delete your account.", 401)
+    if list(store.scans.find({"user_id": user["user_id"], "status": "processing"})):
+        raise _error("SCAN_IN_PROGRESS", "Wait for your scans to finish before deleting your account.", 409)
+    for scan in list(store.scans.find({"user_id": user["user_id"]})):
+        for file_id in scan.get("images", {}).values():
+            if file_id:
+                store.fs.delete(file_id)
+        store.scans.delete_one({"scan_id": scan["scan_id"]})
+    for product in list(store.products.find({"user_id": user["user_id"]})):
+        store.products.delete_one({"product_id": product["product_id"]})
+    store.users.delete_one({"user_id": user["user_id"]})
+    response.delete_cookie("ll_session", path="/")
+    return {"message": "Account and live scan data deleted"}
+
+
+@router.get("/products")
+def list_products(user=Depends(_current_user)):
+    documents = sorted(store.products.find({"user_id": user["user_id"]}),
+                       key=lambda p: p.get("created_at", ""), reverse=True)
+    return {"products": [_json_safe({k: v for k, v in p.items() if k != "_id"})
+                         for p in documents[:100]]}
 
 
 @router.put("/users/{user_id}/conditions")
@@ -158,6 +226,7 @@ async def scan_product(
     front_image: UploadFile = File(...),
     back_image: UploadFile = File(...),
     nutrition_image: UploadFile = File(None),
+    user=Depends(_current_user),
 ):
     """Accept front + back (ingredients/nutrition) photos; process async.
 
@@ -171,7 +240,7 @@ async def scan_product(
         if file is None:
             payloads.append((name, None, None, None))
             continue
-        image_bytes = await file.read()
+        image_bytes = await file.read(MAX_IMAGE_SIZE + 1)
         content_type = _validate_image(file, image_bytes)
         payloads.append((name, image_bytes, file.filename, content_type))
 
@@ -179,11 +248,24 @@ async def scan_product(
         "SCAN-" + started_at.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3).upper()
     )
 
-    task = asyncio.create_task(
-        asyncio.to_thread(_process_scan, payloads, scan_id, started_at)
-    )
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+    if len(list(store.scans.find({"user_id": user["user_id"], "status": "processing"}))) >= 3:
+        raise _error("TOO_MANY_SCANS", "Wait for your current scans to finish.", 429)
+    image_refs = {}
+    try:
+        for name, data, filename, content_type in payloads:
+            if data:
+                image_refs[name] = store.fs.put(data, filename=filename, metadata={"content_type": content_type})
+        document = create_scan_document(scan_id, user["user_id"], image_refs)
+        document["job_state"] = "queued"
+        store.scans.insert_one(document)
+    except Exception:
+        for file_id in image_refs.values():
+            store.fs.delete(file_id)
+        raise
+    if not config.PRODUCTION:
+        task = asyncio.create_task(_run_local_scan(scan_id))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
     return {
         "scan_id": scan_id,
@@ -192,25 +274,25 @@ async def scan_product(
     }
 
 
-def _process_scan(payloads, scan_id, started_at):
-    """Synchronous scan pipeline; runs in a worker thread."""
-    image_refs = {}
-    try:
-        for name, image_bytes, filename, content_type in payloads:
-            if image_bytes:
-                image_refs[name] = store.fs.put(
-                    image_bytes, filename=filename or f"{name}.jpg",
-                    metadata={"content_type": content_type},
-                )
+async def _run_local_scan(scan_id):
+    async with _scan_slots:
+        await asyncio.to_thread(_process_scan, scan_id)
 
-        document = create_scan_document(scan_id, None, image_refs)
-        store.scans.insert_one(document)
+
+def _process_scan(scan_id):
+    """Synchronous scan pipeline; runs in a worker thread."""
+    document = store.scans.find_one({"scan_id": scan_id})
+    image_refs = document["images"]
+    user_id = document["user_id"]
+    started_at = datetime.fromisoformat(document["created_at"])
+    try:
+        store.scans.update_one({"scan_id": scan_id}, {"$set": {"job_state": "running"}})
 
         # --- OCR over each provided image -------------------------------
         ocr_parts = []
         confidences = []
         per_image = {}
-        for name, _bytes, _filename, _ctype in payloads:
+        for name in ("front", "back", "nutrition"):
             if not image_refs.get(name):
                 continue
             raw = extract_text(store.fs.get(image_refs[name]).read())
@@ -229,7 +311,8 @@ def _process_scan(payloads, scan_id, started_at):
 
         # --- Extraction -> structured product -> compliance -------------
         product, compliance = run_scan_pipeline(combined_text, confidence_avg)
-        product_id = "p_" + secrets.token_hex(6)
+        # Stable ID makes restarting an interrupted job idempotent.
+        product_id = "p_" + scan_id
         product["product_id"] = product_id
 
         needs_review = False
@@ -250,18 +333,25 @@ def _process_scan(payloads, scan_id, started_at):
                 + ", ".join(product["inr"]["missing_fields_treated_as_zero"])
             )
 
-        store.products.insert_one({
+        saved_product = {
             "product_id": product_id,
             "scan_id": scan_id,
             **product,
+            "user_id": user_id,
+            "needs_review": needs_review,
+            "review_reasons": review_reasons,
+            "ocr_confidence_avg": confidence_avg,
             "compliance": compliance,
             "created_at": datetime.now(timezone.utc).isoformat(),
-        })
+        }
+        if not store.products.find_one({"product_id": product_id}):
+            store.products.insert_one(saved_product)
 
         store.scans.update_one(
             {"scan_id": scan_id},
             {"$set": {
                 "status": "done",
+                "job_state": "done",
                 "ocr": {
                     "text": combined_text[:20000],
                     "cleaned_text": combined_text[:20000],
@@ -289,6 +379,7 @@ def _process_scan(payloads, scan_id, started_at):
                 {"scan_id": scan_id},
                 {"$set": {
                     "status": "failed",
+                    "job_state": "failed",
                     "error": str(error),
                     "processing.completed_at": datetime.now(timezone.utc).isoformat(),
                 }},
@@ -298,8 +389,8 @@ def _process_scan(payloads, scan_id, started_at):
 
 
 @router.get("/scan/{scan_id}")
-def get_scan(scan_id: str):
-    scan = _find_scan(scan_id)
+def get_scan(scan_id: str, user=Depends(_current_user)):
+    scan = _find_scan(scan_id, user)
     status = scan.get("status")
     if status == "processing":
         return {"scan_id": scan_id, "status": "processing"}
@@ -310,7 +401,7 @@ def get_scan(scan_id: str):
             "status": "failed",
             "error": {
                 "code": "PROCESSING_FAILED",
-                "message": scan.get("error") or "The scan could not be completed",
+                "message": "The scan could not be completed. Please try clearer photos.",
                 "http_status": 500,
             },
         }
@@ -330,15 +421,15 @@ def get_scan(scan_id: str):
 # --------------------------------------------------------------------------
 
 @router.get("/product/{product_id}")
-def get_product(product_id: str):
-    product = _find_product(product_id)
+def get_product(product_id: str, user=Depends(_current_user)):
+    product = _find_product(product_id, user)
     return _json_safe(product)
 
 
 @router.post("/compare")
 def compare_products(body: dict, user=Depends(_current_user)):
     def slim(pid):
-        product = _find_product(pid)
+        product = _find_product(pid, user)
         per100 = product.get("nutrition_per_100g", {})
         return {
             "product_id": product.get("product_id"),
@@ -372,7 +463,7 @@ def personalize_product(body: dict, user=Depends(_current_user)):
     if not product_id:
         raise _error("VALIDATION_ERROR", "product_id is required", 400)
 
-    product = _find_product(product_id)
+    product = _find_product(product_id, user)
     try:
         result = personalize(product, conditions)
     except ValueError as error:
@@ -390,8 +481,8 @@ def personalize_product(body: dict, user=Depends(_current_user)):
 # --------------------------------------------------------------------------
 
 @router.get("/compliance-report/{product_id}")
-def compliance_report_pdf(product_id: str, regenerate: bool = False):
-    product = _find_product(product_id)
+def compliance_report_pdf(product_id: str, regenerate: bool = False, user=Depends(_current_user)):
+    product = _find_product(product_id, user)
     compliance = product.get("compliance")
     if regenerate or not compliance:
         structured = build_compliance_structured(product)
@@ -414,8 +505,8 @@ def compliance_report_pdf(product_id: str, regenerate: bool = False):
 
 
 @router.get("/compliance-report/{product_id}/summary")
-def compliance_report_summary(product_id: str):
-    product = _find_product(product_id)
+def compliance_report_summary(product_id: str, user=Depends(_current_user)):
+    product = _find_product(product_id, user)
     compliance = product.get("compliance")
     if not compliance:
         structured = build_compliance_structured(product)
@@ -444,8 +535,8 @@ def build_compliance_structured(product):
 # --------------------------------------------------------------------------
 
 @router.get("/scan/{scan_id}/image/{position}")
-def get_scan_image(scan_id: str, position: str):
-    scan = _find_scan(scan_id)
+def get_scan_image(scan_id: str, position: str, user=Depends(_current_user)):
+    scan = _find_scan(scan_id, user)
     gridfs_id = (scan.get("images") or {}).get(position)
     if not gridfs_id:
         raise _error("NOT_FOUND", f"No '{position}' image stored for scan {scan_id}", 404)
@@ -453,4 +544,5 @@ def get_scan_image(scan_id: str, position: str):
         data = store.fs.get(gridfs_id).read()
     except Exception as error:  # noqa: BLE001
         raise _error("NOT_FOUND", "Image not found in storage", 404) from error
-    return Response(content=data, media_type="image/jpeg")
+    media_type = "image/png" if data.startswith(b"\x89PNG") else "image/webp" if data.startswith(b"RIFF") else "image/jpeg"
+    return Response(content=data, media_type=media_type)

@@ -1,20 +1,37 @@
 """LabelLens API entrypoint."""
 
 import logging
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config
 from .api.routes import router
 from .database.store import storage_backend, test_connection
+from .security import security_middleware
 
 logging.basicConfig(level=logging.INFO)
 
+@asynccontextmanager
+async def lifespan(app):
+    task = None
+    if config.PRODUCTION:
+        from .services.scan_worker import run_worker
+        task = asyncio.create_task(run_worker())
+    yield
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="LabelLens API",
     version="1.0.0",
     description=(
@@ -23,6 +40,7 @@ app = FastAPI(
         "engine, not a health-verdict model (ADR-1)."
     ),
 )
+app.middleware("http")(security_middleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -52,7 +70,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 @app.get("/")
-def root():
+def root(request: Request):
+    if "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse("/ui")
     return {
         "message": "LabelLens API is running",
         "version": "1.0.0",
@@ -62,7 +82,13 @@ def root():
 
 @app.get("/ui", include_in_schema=False)
 def web_app():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    return FileResponse(STATIC_DIR / "sw.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
 
 @app.get("/health")
@@ -79,6 +105,6 @@ def health():
             content={
                 "status": "unhealthy",
                 "storage_backend": storage_backend(),
-                "error": str(error),
+                "error": "Storage is unavailable",
             },
         )

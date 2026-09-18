@@ -8,6 +8,7 @@ supported values (ADR-4: no free-text disease entry).
 import hashlib
 import hmac
 import secrets
+import re
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -45,18 +46,20 @@ def _verify_password(password, stored):
 
 
 def _issue_token(user_id):
+    user = store.users.find_one({"user_id": user_id}) or {}
     payload = {
         "sub": user_id,
         "iat": datetime.now(timezone.utc),
         "exp": datetime.now(timezone.utc) + timedelta(hours=config.JWT_EXPIRY_HOURS),
+        "ver": user.get("token_version", 0),
     }
     return jwt.encode(payload, config.JWT_SECRET, algorithm=config.JWT_ALGORITHM)
 
 
 def signup(email, password):
-    if not email or "@" not in email:
+    if not isinstance(email, str) or len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email.strip()):
         raise AuthError("VALIDATION_ERROR", "A valid email is required", 400)
-    if not password or len(password) < 8:
+    if not isinstance(password, str) or not 8 <= len(password) <= 128:
         raise AuthError("VALIDATION_ERROR", "Password must be at least 8 characters", 400)
 
     email = email.strip().lower()
@@ -71,12 +74,16 @@ def signup(email, password):
         "conditions": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    store.users.insert_one(user)
+    from pymongo.errors import DuplicateKeyError
+    try:
+        store.users.insert_one(user)
+    except DuplicateKeyError as error:
+        raise AuthError("CONFLICT", "An account with this email already exists", 409) from error
     return {"user_id": user_id, "token": _issue_token(user_id)}
 
 
 def login(email, password):
-    if not email or not password:
+    if not isinstance(email, str) or not isinstance(password, str) or not email or not password or len(password) > 128:
         raise AuthError("VALIDATION_ERROR", "Email and password are required", 400)
 
     user = store.users.find_one({"email": email.strip().lower()})
@@ -98,6 +105,8 @@ def user_from_token(token):
     user = store.users.find_one({"user_id": payload.get("sub")})
     if not user:
         raise AuthError("UNAUTHORIZED", "User no longer exists", 401)
+    if payload.get("ver", 0) != user.get("token_version", 0):
+        raise AuthError("UNAUTHORIZED", "Session expired. Please sign in again.", 401)
     return user
 
 
@@ -106,6 +115,8 @@ def update_conditions(user_id, conditions):
 
     if not isinstance(conditions, list):
         raise AuthError("VALIDATION_ERROR", "conditions must be a list", 400)
+    if not all(isinstance(c, str) for c in conditions):
+        raise AuthError("VALIDATION_ERROR", "conditions must contain strings", 400)
     invalid = [c for c in conditions if c not in SUPPORTED_CONDITIONS]
     if invalid:
         raise AuthError(

@@ -143,11 +143,18 @@ if config.MONGODB_URI:
         mongo_client, mongo_db = _build_mongo()
         _backend = "mongodb"
     except Exception:  # noqa: BLE001 - fall back gracefully at import time
+        if config.PRODUCTION:
+            raise RuntimeError("Production database connection failed") from None
         mongo_client = None
         mongo_db = None
         _backend = "memory"
 
 if _backend == "mongodb":
+    mongo_db["users"].create_index("email", unique=True)
+    mongo_db["scans"].create_index("scan_id", unique=True)
+    mongo_db["scans"].create_index([("user_id", 1), ("created_at", -1)])
+    mongo_db["products"].create_index("product_id", unique=True)
+    mongo_db["products"].create_index([("user_id", 1), ("created_at", -1)])
     scans = _MongoCollectionAdapter(mongo_db["scans"])
     users = _MongoCollectionAdapter(mongo_db["users"])
     products = _MongoCollectionAdapter(mongo_db["products"])

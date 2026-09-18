@@ -50,6 +50,7 @@ def _read_variant(pytesseract, image, mode):
         image,
         config=f"--oem 3 --psm {mode}",
         output_type=pytesseract.Output.DICT,
+        timeout=30,
     )
     lines = {}
     confidences = []
@@ -97,7 +98,7 @@ def extract_text(image_bytes: bytes) -> dict:
     except ImportError as error:
         raise RuntimeError("OCR is unavailable; install the backend requirements") from error
 
-    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    image = ImageOps.exif_transpose(Image.open(BytesIO(image_bytes))).convert("RGB")
     candidates = []
     for variant in _prepare_variants(image):
         result = _read_variant(pytesseract, variant, 6)

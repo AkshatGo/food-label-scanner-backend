@@ -145,8 +145,8 @@ def test_scan_rejects_non_image(client, auth_headers):
     assert response.status_code == 400
 
 
-def test_scan_unknown_id_404(client):
-    assert client.get("/api/v1/scan/SCAN-NOPE").status_code == 404
+def test_scan_unknown_id_404(client, auth_headers):
+    assert client.get("/api/v1/scan/SCAN-NOPE", headers=auth_headers).status_code == 404
 
 
 # --- Product, compare, personalize ---------------------------------------------------

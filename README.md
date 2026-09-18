@@ -1,4 +1,20 @@
-# LabelLens — Backend
+# LabelLens — Mobile app and API
+
+The mobile-first app is served at `/ui` (browser visits to `/` redirect there).
+It includes camera photo capture, an account-backed shelf, nutrition results,
+comparison, optional dietary preferences, PDF reports, data export and account
+deletion. Install it from a supported mobile browser as a PWA. The offline cache
+stores only the public interface; scans and personal information require a connection.
+
+Production deployment instructions and outstanding release gates:
+[`docs/08_production_release.md`](docs/08_production_release.md).
+Visual direction: [`DESIGN.md`](DESIGN.md). Replit configuration is included.
+The release is not yet deployed or verified against a managed production database.
+
+**API privacy change:** scan uploads, polling, images, products and PDF reports now
+require authentication and are scoped to the signed-in owner. The browser uses an
+HttpOnly cookie; API clients may use the bearer JWT. Existing unowned development
+records are intentionally not exposed to authenticated users.
 
 OCR-based food label scanner implementing the full LabelLens spec: **FSSAI Indian Nutrition Rating (INR) star formula**, **4-condition personalization rule engine**, and the **Government Compliance Report (PDF)** — all as a transparent, versioned, auditable **rules/formula engine, not a health-verdict model** (ADR-1).
 

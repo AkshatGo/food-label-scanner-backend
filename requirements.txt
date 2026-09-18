@@ -11,3 +11,4 @@ PyJWT
 httpx
 httpx2
 pytest
+requests

@@ -1,136 +1,426 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f6f4ee">
-  <title>LabelLens — Know what’s inside</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css">
-</head>
-<body>
-  <div class="app-shell">
-    <aside class="sidebar" aria-label="Primary navigation">
-      <a class="brand" href="#overview" aria-label="LabelLens home">
-        <span class="brand-mark"><span></span></span>
-        <span>LabelLens</span>
-      </a>
-      <nav>
-        <button class="nav-item active" data-view="overview"><span class="nav-icon">⌂</span>Overview</button>
-        <button class="nav-item" data-view="scan"><span class="nav-icon">⌗</span>Scan a label</button>
-        <button class="nav-item" data-view="compare"><span class="nav-icon">⇄</span>Compare</button>
-        <button class="nav-item" data-view="history"><span class="nav-icon">◷</span>History</button>
-      </nav>
-      <div class="sidebar-foot">
-        <div class="trust-card">
-          <div class="trust-icon">✓</div>
-          <strong>Transparent by design</strong>
-          <p>Every rating is backed by the FSSAI INR formula.</p>
-        </div>
-        <button class="account-button" id="accountButton">
-          <span class="avatar" id="avatar">LL</span>
-          <span><strong id="accountName">Your profile</strong><small id="accountHint">Sign in to personalize</small></span>
-          <span>›</span>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#f7f4ec" />
+    <meta
+      name="description"
+      content="Your personal food field guide. Scan labels, understand ingredients and keep your grocery decisions in one place."
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>LabelLens · Your food, understood.</title>
+    <link rel="manifest" href="/static/manifest.webmanifest" />
+    <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/static/icon-192.png" />
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script type="module" src="/static/app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <div class="app-frame">
+      <header class="masthead">
+        <a class="wordmark" href="#home" aria-label="LabelLens home"
+          ><span class="brand-symbol" aria-hidden="true">ll.</span>label<span
+            >lens</span
+          ></a
+        ><span class="masthead-caption">A little more label literacy.</span
+        ><button
+          class="avatar"
+          data-view="profile"
+          aria-label="Open profile"
+          id="avatar"
+        >
+          You
         </button>
-      </div>
-    </aside>
-
-    <main>
-      <header class="topbar">
-        <button class="mobile-menu" id="mobileMenu" aria-label="Open menu">☰</button>
-        <div class="status-pill"><i></i> FSSAI rules engine online</div>
-        <button class="profile-shortcut" id="profileShortcut">Health preferences <span>→</span></button>
       </header>
-
-      <section class="view active" id="overviewView">
-        <div class="hero">
-          <div>
-            <span class="eyebrow">Food clarity, in seconds</span>
-            <h1>Know what’s really<br>inside your food.</h1>
-            <p>Scan any packaged food label to decode nutrition, understand ingredients, and get guidance shaped around you.</p>
-            <button class="primary-button" data-go="scan">Scan your first label <span>→</span></button>
+      <div class="connection hidden" id="connection" role="status">
+        You're offline. Connect to scan or load your library.
+      </div>
+      <main id="content" tabindex="-1">
+        <section class="screen" id="homeScreen" aria-labelledby="homeTitle">
+          <div class="editorial-head">
+            <span class="eyebrow">THE EVERYDAY FOOD FIELD GUIDE</span
+            ><span class="edition">01 / DISCOVER</span>
           </div>
-          <div class="hero-visual" aria-hidden="true">
-            <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
-            <div class="scan-card-demo">
-              <div class="demo-top"><span class="mini-logo"></span><span>ANALYSIS COMPLETE</span></div>
-              <h3>Whole Grain Cereal</h3><small>Nutrition per 100g</small>
-              <div class="score-ring"><strong>4.0</strong><span>★</span></div>
-              <div class="demo-bars"><i style="--w:72%"></i><i style="--w:43%"></i><i style="--w:58%"></i></div>
-              <div class="demo-good">✓ A better everyday choice</div>
+          <div class="home-grid">
+            <div class="home-intro">
+              <h1 id="homeTitle">
+                Good food starts<br />with a closer <em>look.</em>
+              </h1>
+              <p>
+                Turn the small print into the bigger picture.<br />One label at
+                a time.
+              </p>
+              <button class="button primary" data-view="scan">
+                <span data-icon="scan"></span>Scan a label
+                <span aria-hidden="true">↗</span>
+              </button>
+              <p class="micro">
+                Front + back. A clearer view of what's inside.
+              </p>
+            </div>
+            <div class="field-art" aria-hidden="true">
+              <div class="art-caption">FIELD NOTE / 001</div>
+              <div class="paper-pack">
+                <div class="pack-top">THE SMALL PRINT</div>
+                <div class="pack-title">
+                  What's<br />in your<br /><i>everyday?</i>
+                </div>
+                <div class="pack-rule"></div>
+                <div class="pack-bottom">
+                  LOOK BEYOND<br />THE FRONT OF THE PACK.
+                </div>
+                <div class="barcode"></div>
+              </div>
+              <div class="lens-ring">
+                <span>Look<br />closer.</span>
+              </div>
+              <span class="art-foot">KNOW MORE. CHOOSE WITH CONTEXT.</span>
             </div>
           </div>
-        </div>
-
-        <div class="section-heading"><div><span class="eyebrow">How it works</span><h2>From label to clarity</h2></div><p>No black-box verdicts. Just transparent, traceable analysis.</p></div>
-        <div class="feature-grid">
-          <article><span class="feature-num">01</span><div class="feature-icon coral">⌗</div><h3>Capture the label</h3><p>Upload clear photos of the front and back of your food package.</p></article>
-          <article><span class="feature-num">02</span><div class="feature-icon yellow">◎</div><h3>We decode it</h3><p>OCR reads the nutrition panel, ingredients, allergens and declarations.</p></article>
-          <article><span class="feature-num">03</span><div class="feature-icon green">✦</div><h3>See what matters</h3><p>Get an FSSAI-based star rating and transparent personalized guidance.</p></article>
-        </div>
-
-        <div class="recent-block">
-          <div class="section-heading compact"><div><span class="eyebrow">Your library</span><h2>Recent scans</h2></div><button class="text-button" data-go="history">View all →</button></div>
-          <div id="recentScans" class="empty-state"><span>⌗</span><strong>No labels scanned yet</strong><p>Your latest products will appear here.</p><button class="secondary-button" data-go="scan">Start scanning</button></div>
-        </div>
-      </section>
-
-      <section class="view" id="scanView">
-        <div class="page-title"><div><span class="eyebrow">New analysis</span><h1>Scan a food label</h1><p>Use clear, well-lit photos with the full label visible.</p></div><span class="step-indicator">2 required photos</span></div>
-        <form id="scanForm">
-          <div class="upload-grid">
-            <label class="upload-zone" id="frontZone"><input type="file" id="frontImage" accept="image/png,image/jpeg,image/webp" required><span class="upload-art">＋</span><strong>Front of package</strong><p>Product name and main display panel</p><small>PNG, JPG or WEBP · max 10 MB</small><img alt="Front label preview"></label>
-            <label class="upload-zone" id="backZone"><input type="file" id="backImage" accept="image/png,image/jpeg,image/webp" required><span class="upload-art">＋</span><strong>Back of package</strong><p>Ingredients and nutrition information</p><small>PNG, JPG or WEBP · max 10 MB</small><img alt="Back label preview"></label>
-            <label class="upload-zone optional" id="nutritionZone"><input type="file" id="nutritionImage" accept="image/png,image/jpeg,image/webp"><span class="optional-tag">Optional</span><span class="upload-art">＋</span><strong>Nutrition close-up</strong><p>Add this if the panel is hard to read</p><small>PNG, JPG or WEBP · max 10 MB</small><img alt="Nutrition label preview"></label>
+          <div class="section-line">
+            <h2>Your shelf</h2>
+            <button class="text-button" data-view="library">
+              View library ↗
+            </button>
           </div>
-          <div class="scan-tips"><strong>For the best result</strong><span>☀ Use even lighting</span><span>▣ Keep text in focus</span><span>↔ Capture the full panel</span></div>
-          <button class="primary-button submit-scan" type="submit" disabled>Analyze label <span>→</span></button>
-        </form>
-        <div class="processing-card hidden" id="processingCard"><div class="scanner-animation"><span></span></div><div><span class="eyebrow">Reading your label</span><h2 id="processingTitle">Extracting product details…</h2><p id="processingText">Our OCR is identifying nutrition values and ingredients.</p></div><div class="progress"><i></i></div></div>
-        <div id="resultPanel" class="hidden"></div>
-      </section>
-
-      <section class="view" id="compareView">
-        <div class="page-title"><div><span class="eyebrow">Side by side</span><h1>Compare products</h1><p>See which option better fits what matters to you.</p></div></div>
-        <div class="compare-picker"><label>First product<select id="compareA"></select></label><span>VS</span><label>Second product<select id="compareB"></select></label><button class="primary-button" id="compareButton">Compare now</button></div>
-        <div id="compareResult" class="empty-state"><span>⇄</span><strong>Choose two scanned products</strong><p>Comparisons use the same FSSAI formula for an honest side-by-side view.</p></div>
-      </section>
-
-      <section class="view" id="historyView">
-        <div class="page-title"><div><span class="eyebrow">Saved locally</span><h1>Scan history</h1><p>Products analyzed in this browser session.</p></div><button class="secondary-button" id="clearHistory">Clear history</button></div>
-        <div id="historyGrid" class="history-grid"></div>
-      </section>
-    </main>
-  </div>
-
-  <div class="modal-backdrop hidden" id="authModal">
-    <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
-      <button class="modal-close" data-close="authModal">×</button>
-      <div class="modal-brand"><span class="brand-mark"><span></span></span></div>
-      <span class="eyebrow">Make it personal</span><h2 id="authTitle">Welcome to LabelLens</h2><p>Sign in to save health preferences and unlock tailored guidance.</p>
-      <div class="auth-tabs"><button class="active" data-auth="login">Sign in</button><button data-auth="signup">Create account</button></div>
-      <form id="authForm"><label>Email address<input type="email" id="authEmail" placeholder="you@example.com" required></label><label>Password<input type="password" id="authPassword" placeholder="At least 8 characters" minlength="8" required></label><button class="primary-button" id="authSubmit" type="submit">Sign in <span>→</span></button></form>
-      <p class="form-message" id="authMessage"></p>
-      <button class="guest-button" data-close="authModal">Continue as guest</button>
+          <div id="recentProducts" class="product-list"></div>
+          <article class="field-note">
+            <span class="note-number">Nº 01</span>
+            <div>
+              <span class="eyebrow">A LABEL READING HABIT</span>
+              <h3>Compare the same amount.</h3>
+              <p>
+                Serving sizes differ between packs. Check values per 100g or
+                100ml to put products on equal footing.
+              </p>
+            </div>
+            <span data-icon="book" class="note-icon"></span>
+          </article>
+          <div class="method-strip">
+            <span data-icon="shield"></span>
+            <p>
+              Every number has a source. Ratings use a versioned draft formula;
+              uncertain readings are marked for review.
+            </p>
+            <button class="text-button" id="aboutButton">Our approach</button>
+          </div>
+        </section>
+        <section
+          class="screen hidden"
+          id="scanScreen"
+          aria-labelledby="scanTitle"
+        >
+          <div class="editorial-head">
+            <span class="eyebrow">THE LABEL READER</span
+            ><span class="edition">02 / SCAN</span>
+          </div>
+          <h1 id="scanTitle">Let's read <em>the label.</em></h1>
+          <p class="lede">
+            Two clear photos. A front, a back, and nothing hidden.
+          </p>
+          <form id="scanForm">
+            <div class="capture-grid">
+              <div class="capture-card">
+                <div class="capture-heading">
+                  <span>01</span>
+                  <h2>Front of pack</h2>
+                  <span class="tag">Required</span>
+                </div>
+                <label class="capture-zone" for="frontImage"
+                  ><span data-icon="package"></span
+                  ><strong>Product name &amp; front label</strong
+                  ><span>Take a photo or choose from your library</span
+                  ><img
+                    id="frontPreview"
+                    alt="Your front label photo"
+                    hidden /><input
+                    id="frontImage"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    capture="environment"
+                    required /></label
+                ><button
+                  class="text-button hidden"
+                  type="button"
+                  data-remove="front"
+                >
+                  Remove photo
+                </button>
+              </div>
+              <div class="capture-card">
+                <div class="capture-heading">
+                  <span>02</span>
+                  <h2>Back of pack</h2>
+                  <span class="tag">Required</span>
+                </div>
+                <label class="capture-zone" for="backImage"
+                  ><span data-icon="list"></span
+                  ><strong>Ingredients &amp; nutrition panel</strong
+                  ><span>Keep the text in focus and fill the frame</span
+                  ><img
+                    id="backPreview"
+                    alt="Your back label photo"
+                    hidden /><input
+                    id="backImage"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    capture="environment"
+                    required /></label
+                ><button
+                  class="text-button hidden"
+                  type="button"
+                  data-remove="back"
+                >
+                  Remove photo
+                </button>
+              </div>
+            </div>
+            <details class="optional-photo">
+              <summary>Nutrition panel on another side? Add a close-up</summary>
+              <label for="nutritionImage">Optional nutrition photo</label
+              ><input
+                id="nutritionImage"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                capture="environment"
+              /><button
+                type="button"
+                class="text-button hidden"
+                data-remove="nutrition"
+              >
+                Remove
+              </button>
+            </details>
+            <div class="capture-footer">
+              <p>
+                Natural light. Flat label. No glare.<br /><small
+                  >JPEG, PNG or WEBP · Up to 10 MB / 25 MP per photo</small
+                >
+              </p>
+              <button class="button primary" id="scanSubmit" type="submit">
+                Read this label ↗
+              </button>
+            </div>
+            <p class="inline-error" id="scanError" role="alert"></p>
+          </form>
+          <div class="progress-panel hidden" id="scanProgress" role="status">
+            <span class="scan-loader" aria-hidden="true"></span
+            ><span class="eyebrow">YOUR PHOTOS ARE IN</span>
+            <h2>Reading between the lines.</h2>
+            <p id="progressText">
+              Reading nutrition and ingredients. You can leave this screen;
+              we'll keep your place.
+            </p>
+            <button class="text-button" id="resumeScan">Check status</button>
+          </div>
+        </section>
+        <section
+          class="screen hidden"
+          id="libraryScreen"
+          aria-labelledby="libraryTitle"
+        >
+          <div class="editorial-head">
+            <span class="eyebrow">YOUR PERSONAL SHELF</span
+            ><span class="edition">03 / LIBRARY</span>
+          </div>
+          <h1 id="libraryTitle">
+            A little knowledge,<br /><em>saved for later.</em>
+          </h1>
+          <div class="library-tools">
+            <label class="search-box"
+              ><span data-icon="search"></span
+              ><input
+                id="librarySearch"
+                type="search"
+                placeholder="Find a product…"
+                aria-label="Search your products" /></label
+            ><button class="button subtle" id="refreshLibrary">Refresh</button>
+          </div>
+          <div id="libraryProducts" class="product-list"></div>
+        </section>
+        <section
+          class="screen hidden"
+          id="compareScreen"
+          aria-labelledby="compareTitle"
+        >
+          <div class="editorial-head">
+            <span class="eyebrow">THE SAME MEASURE</span
+            ><span class="edition">04 / COMPARE</span>
+          </div>
+          <h1 id="compareTitle">
+            Side by side.<br /><em>See the difference.</em>
+          </h1>
+          <p class="lede">
+            Choose two products from your shelf. Compare like with like.
+          </p>
+          <form id="compareForm" class="comparison-form">
+            <label
+              >First product<select id="compareA" required>
+                <option value="">Choose a product</option>
+              </select></label
+            ><span class="versus">&amp;</span
+            ><label
+              >Second product<select id="compareB" required>
+                <option value="">Choose a product</option>
+              </select></label
+            ><button class="button primary">Compare</button>
+          </form>
+          <p class="inline-error" id="compareError" role="alert"></p>
+          <div id="compareResult"></div>
+        </section>
+        <section
+          class="screen hidden"
+          id="profileScreen"
+          aria-labelledby="profileTitle"
+        >
+          <div class="editorial-head">
+            <span class="eyebrow">PERSONAL, BY CHOICE</span
+            ><span class="edition">05 / YOU</span>
+          </div>
+          <h1 id="profileTitle">Your food.<br /><em>Your context.</em></h1>
+          <div id="accountPanel"></div>
+          <form id="preferencesForm" class="preferences hidden">
+            <h2>What matters to you?</h2>
+            <p>
+              Optional dietary flags based on your selected preferences. Change
+              these at any time.
+            </p>
+            <div class="preference-grid">
+              <label
+                ><input type="checkbox" name="condition" value="sugar" /><span
+                  ><strong>Sugar awareness</strong
+                  ><small>Added and total sugar</small></span
+                ></label
+              ><label
+                ><input
+                  type="checkbox"
+                  name="condition"
+                  value="diabetes"
+                /><span
+                  ><strong>Diabetes</strong
+                  ><small>Sugar, fibre and sodium</small></span
+                ></label
+              ><label
+                ><input
+                  type="checkbox"
+                  name="condition"
+                  value="migraine"
+                /><span
+                  ><strong>Migraine</strong
+                  ><small>Potential ingredient triggers</small></span
+                ></label
+              ><label
+                ><input type="checkbox" name="condition" value="fever" /><span
+                  ><strong>Fever / recovery</strong
+                  ><small>Sodium and saturated fat</small></span
+                ></label
+              >
+            </div>
+            <p class="fine-print">
+              General information, not a diagnosis or a substitute for advice
+              from your clinician or registered dietitian.
+            </p>
+            <button class="button primary" type="submit">
+              Save preferences
+            </button>
+            <p id="profileError" role="alert" class="inline-error"></p>
+          </form>
+          <div class="install-panel">
+            <div>
+              <h2>A place on your home screen.</h2>
+              <p id="installHint">
+                On iPhone: Share → Add to Home Screen. On Android: use your
+                browser's Install app menu.
+              </p>
+            </div>
+            <button class="button subtle hidden" id="installButton">
+              Install LabelLens
+            </button>
+          </div>
+        </section>
+        <section
+          class="screen hidden"
+          id="resultScreen"
+          aria-label="Product analysis"
+        >
+          <button class="text-button back-button" data-view="library">
+            ← Your shelf
+          </button>
+          <div id="productResult"></div>
+        </section>
+      </main>
+      <footer class="app-footer">
+        <span>label lens / FOOD, UNDERSTOOD.</span
+        ><button class="text-button" id="privacyButton">
+          Privacy &amp; data</button
+        ><a href="/docs">API</a>
+      </footer>
+      <nav class="tabbar" aria-label="Main navigation">
+        <a href="#home" data-nav="home"
+          ><span data-icon="home"></span><span>Today</span></a
+        ><a href="#library" data-nav="library"
+          ><span data-icon="book"></span><span>Shelf</span></a
+        ><a href="#scan" data-nav="scan" class="scan-tab"
+          ><span data-icon="scan"></span><span>Scan</span></a
+        ><a href="#compare" data-nav="compare"
+          ><span data-icon="compare"></span><span>Compare</span></a
+        ><a href="#profile" data-nav="profile"
+          ><span data-icon="user"></span><span>You</span></a
+        >
+      </nav>
     </div>
-  </div>
-
-  <div class="modal-backdrop hidden" id="profileModal">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
-      <button class="modal-close" data-close="profileModal">×</button><span class="eyebrow">Personalization</span><h2 id="profileTitle">Health preferences</h2><p>Select the considerations you want LabelLens to use. These provide guidance, not medical advice.</p>
-      <div class="condition-grid" id="conditionGrid">
-        <label><input type="checkbox" value="sugar"><span><b>Low sugar</b><small>Watch added and total sugars</small></span></label>
-        <label><input type="checkbox" value="diabetes"><span><b>Diabetes</b><small>Review sugars, fibre and sodium</small></span></label>
-        <label><input type="checkbox" value="migraine"><span><b>Migraine</b><small>Flag common ingredient triggers</small></span></label>
-        <label><input type="checkbox" value="fever"><span><b>Recovery</b><small>Watch sodium and saturated fat</small></span></label>
+    <dialog id="authDialog">
+      <button class="dialog-close" data-close aria-label="Close sign in">
+        ×</button
+      ><span class="eyebrow">YOUR OWN CORNER OF THE SHELF</span>
+      <h2 id="authTitle">Welcome <em>back.</em></h2>
+      <p>Your scans and preferences stay with your account.</p>
+      <div class="auth-tabs" role="group" aria-label="Account action">
+        <button type="button" data-auth="login" aria-pressed="true">
+          Sign in</button
+        ><button type="button" data-auth="signup" aria-pressed="false">
+          Create account
+        </button>
       </div>
-      <button class="primary-button full" id="saveConditions">Save preferences</button><p class="form-message" id="profileMessage"></p>
-    </div>
-  </div>
-
-  <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js" defer></script>
-</body>
+      <form id="authForm">
+        <label
+          >Email address<input
+            id="email"
+            type="email"
+            autocomplete="email"
+            maxlength="254"
+            required
+            placeholder="you@example.com" /></label
+        ><label
+          >Password<input
+            id="password"
+            type="password"
+            autocomplete="current-password"
+            minlength="8"
+            maxlength="128"
+            required
+            placeholder="At least 8 characters"
+        /></label>
+        <p class="inline-error" id="authError" role="alert"></p>
+        <button class="button primary full" type="submit" id="authSubmit">
+          Sign in
+        </button>
+      </form>
+      <p class="fine-print">
+        Your password is hashed. Your dietary preferences are optional.
+      </p>
+    </dialog>
+    <dialog id="infoDialog">
+      <button class="dialog-close" data-close aria-label="Close information">
+        ×
+      </button>
+      <div id="infoContent"></div>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
 </html>

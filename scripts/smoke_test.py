@@ -9,6 +9,9 @@ import time
 
 import requests
 
+# Preserve the HttpOnly session issued at signup for all protected reads.
+requests = requests.Session()
+
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8099"
 
 # --- 1. Health ----------------------------------------------------------------

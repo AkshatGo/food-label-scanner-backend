@@ -63,6 +63,13 @@ def test_regular_snack_is_category_i():
     assert result["exempt"] is False
 
 
+def test_ocr_panel_before_ingredients_does_not_exempt_fat():
+    result = classify_category(
+        "Test Oat Biscuits\nNutritional Information per 100g\nTotal Fat 20g\n"
+        "Ingredients: wheat flour, palm oil, sugar", "Test Oat Biscuits")
+    assert result["category"] == "I"
+
+
 def test_alcoholic_beverage_exempt():
     result = classify_category("Whisky, 42.8% v/v", "Malty Spirit")
     assert result["category"] == "III"

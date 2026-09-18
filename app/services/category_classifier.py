@@ -99,9 +99,14 @@ def classify_category(label_text, product_name="", declared_category_code=None):
     # front-of-pack text, so only the first line (product identity) is used.
     name_hit = _EXEMPT_RE.search(product_name or "")
     first_line = (label_text or "").splitlines()[0] if label_text else ""
+    # OCR crop merging can place a nutrition panel before the ingredient list.
+    # Stop at either panel so "Total fat" cannot make biscuits exempt as fats.
     marker = re.search(r"\bingredients?\b", text, re.IGNORECASE)
     if marker:
         front_region = text[: marker.start()]
+        panel = re.search(r"\bnutrition(?:al)?\b|\b(?:total|saturated|trans)\s+fat\b|\benergy\s*\d", front_region, re.IGNORECASE)
+        if panel:
+            front_region = front_region[:panel.start()]
     else:
         front_region = f"{product_name or ''} {first_line}".strip()
     exempt_hit = name_hit or _EXEMPT_RE.search(front_region)
