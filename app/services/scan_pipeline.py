@@ -52,7 +52,6 @@ def _extract_product_name(text):
 
 def _product_identity(text):
     """Extract product name / brand / net quantity / dates / license."""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
 
     product_name = _extract_product_name(text) or "Scanned Product"
 
@@ -208,6 +207,7 @@ def build_structured_product(ocr_text, ocr_confidence=None):
             "basis": nutrition["basis"],
             "normalized_to_per_100": nutrition["normalized_to_per_100"],
             "needs_review": nutrition["needs_review"],
+            "ocr_ambiguous_fields": nutrition["ocr_ambiguous_fields"],
             "note": nutrition["note"],
         },
         "inr": inr,
@@ -218,6 +218,9 @@ def build_structured_product(ocr_text, ocr_confidence=None):
 def build_compliance_input(product, ocr_text, ocr_confidence=None):
     """Assemble the structured dict the compliance engine evaluates."""
     per100 = product.get("nutrition_per_100g", {})
+    # The per-100 dict always carries keys (None when not extracted), so its
+    # bare truthiness is always True. B9 must FAIL when nothing was actually
+    # extracted, so presence means at least one core value is a real number.
     nutrition_present = any(
         per100.get(k) is not None
         for k in ("energy_kcal", "protein_g", "carbohydrate_g", "total_sugar_g",
@@ -246,7 +249,7 @@ def build_compliance_input(product, ocr_text, ocr_confidence=None):
         "veg_nonveg_detected": _detect_veg_symbol(ocr_text or ""),
         "veg_symbol_detected": _detect_veg_symbol(ocr_text or ""),
         "inr_rating": bool(product.get("inr", {}).get("eligible")),
-        "nutrition_per_100_present": bool(per100),
+        "nutrition_per_100_present": nutrition_present,
         "nutrition_per_serving_present": bool(re.search(
             r"per\s+(?:serving|pack|packet|sachet|cup|container)", text_lower)),
         "net_quantity": bool(product.get("net_quantity")),

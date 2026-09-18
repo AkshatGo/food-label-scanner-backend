@@ -137,3 +137,19 @@ def test_delete_requires_password_and_erases_owned_data():
         assert store.scans.find_one({'scan_id': sid}) is None
         with pytest.raises(Exception):
             store.fs.get(fid)
+
+
+def test_delete_survives_already_missing_image():
+    """Account deletion must be idempotent: an image id already gone from
+    storage (GridFS NoFile) must not abort cleanup and strand the account."""
+    with TestClient(app) as client:
+        owner = account(client)
+        sid = 'delete-orphan-' + str(time.time_ns())
+        store.scans.insert_one({
+            'scan_id': sid, 'user_id': owner['user_id'], 'status': 'done',
+            'images': {'front': 999999},  # id that was never stored
+        })
+        response = client.request('DELETE', '/api/v1/account', json={'password': 'password123'})
+        assert response.status_code == 200
+        assert store.scans.find_one({'scan_id': sid}) is None
+        assert store.users.find_one({'user_id': owner['user_id']}) is None

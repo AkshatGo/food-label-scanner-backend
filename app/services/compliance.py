@@ -136,7 +136,6 @@ def evaluate_section_b(structured, category="I", visual_unknown=None):
 
     for row_id, requirement, citation, key in CHECKLIST:
         found = structured.get(key)
-        note = ""
 
         # Scope cuts & exemptions first
         if key == "mrp":

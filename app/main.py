@@ -99,7 +99,7 @@ def health():
             "status": "healthy",
             "storage_backend": storage_backend(),
         }
-    except Exception as error:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return JSONResponse(
             status_code=503,
             content={

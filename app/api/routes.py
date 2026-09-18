@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile, Request
 from fastapi.responses import Response
+from gridfs.errors import NoFile
 from PIL import Image, UnidentifiedImageError
 
 from .. import config
@@ -180,10 +181,19 @@ def delete_account(body: dict, response: Response, user=Depends(_current_user)):
         raise _error("UNAUTHORIZED", "Confirm your password to delete your account.", 401)
     if list(store.scans.find({"user_id": user["user_id"], "status": "processing"})):
         raise _error("SCAN_IN_PROGRESS", "Wait for your scans to finish before deleting your account.", 409)
+
+    def _delete_file(file_id):
+        # Mongo GridFS raises NoFile for an already-deleted id; cleanup must
+        # stay idempotent so account deletion can never partially fail.
+        try:
+            store.fs.delete(file_id)
+        except NoFile:
+            pass
+
     for scan in list(store.scans.find({"user_id": user["user_id"]})):
         for file_id in scan.get("images", {}).values():
             if file_id:
-                store.fs.delete(file_id)
+                _delete_file(file_id)
         store.scans.delete_one({"scan_id": scan["scan_id"]})
     for product in list(store.products.find({"user_id": user["user_id"]})):
         store.products.delete_one({"product_id": product["product_id"]})

@@ -12,6 +12,7 @@ from app.services.compliance import (
     required_inr_logo_mm,
     required_veg_symbol_mm,
 )
+from app.services.scan_pipeline import run_scan_pipeline
 
 
 # --- Section A reference tables (doc 06 A.1/A.3/A.4) -----------------------------
@@ -189,6 +190,23 @@ def test_missing_nutrition_panel_fails():
         label_text="no nutrition here",
     )
     result = evaluate_compliance(structured, category="I")
+    b9 = next(row for row in result["section_b"]["rows"] if row["id"] == "B9")
+    assert b9["status"] == "FAIL"
+
+
+def test_pipeline_without_extracted_nutrition_flags_b9_not_pass():
+    """Regression: an empty extraction must not mark the nutrition panel present.
+
+    nutrition_per_100g always carries keys (None values when nothing was
+    extracted); the old bool(per100) made B9 impossible to FAIL.
+    """
+    from app.services.scan_pipeline import build_compliance_input
+
+    product, _compliance = run_scan_pipeline(
+        "Mystery Snack\nIngredients: wheat flour, salt", ocr_confidence=90.0)
+    structured = build_compliance_input(product, "Mystery Snack\nIngredients: wheat flour, salt", 90.0)
+    assert structured["nutrition_per_100_present"] is False
+    result = evaluate_compliance(structured, category=product["category"])
     b9 = next(row for row in result["section_b"]["rows"] if row["id"] == "B9")
     assert b9["status"] == "FAIL"
 

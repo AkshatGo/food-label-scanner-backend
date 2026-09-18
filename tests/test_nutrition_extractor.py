@@ -2,6 +2,7 @@
 flagged pitfall and is tested explicitly)."""
 
 from app.services.nutrition_extractor import extract_nutrition, to_inr_input
+from app.services.scan_pipeline import run_scan_pipeline
 
 
 def test_per100_values_extracted_directly():
@@ -85,3 +86,41 @@ def test_added_sugar_not_confused_with_total_sugar():
     result = extract_nutrition(text)
     assert result["values"]["total_sugar_g"]["value"] == 12
     assert result["values"]["added_sugar_g"]["value"] == 8
+
+
+# --- OCR-ambiguous trailing digit (former g->9 silent rewrite) ---------------
+
+def test_trailing_nine_without_unit_is_not_rewritten():
+    """"Energy 549" without a unit is a valid number: it must be kept intact.
+
+    The old code stripped the trailing 9 here, silently scoring 54 kcal.
+    """
+    text = "Nutritional Information per 100g\nEnergy 549\nProtein 6 g"
+    result = extract_nutrition(text)
+    assert result["values"]["energy_kcal"]["value"] == 549
+
+
+def test_ambiguous_digit_flags_needs_review():
+    """A unit-less trailing 9 is flagged for review, never silently scored."""
+    text = "Nutritional Information per 100g\nEnergy 549\nProtein 6 g"
+    result = extract_nutrition(text)
+    assert result["needs_review"] is True
+    assert result["ocr_ambiguous_fields"] == ["energy_kcal"]
+    assert "OCR" in result["note"] or "OCR" in result["note"].upper()
+
+
+def test_trailing_nine_with_unit_is_unambiguous():
+    """"Protein 9 g" carries its unit; no review flag may fire."""
+    text = "Per 100g\nProtein 9 g\nEnergy 100 kcal"
+    result = extract_nutrition(text)
+    assert result["values"]["protein_g"]["value"] == 9
+    assert result["ocr_ambiguous_fields"] == []
+    assert result["needs_review"] is False
+
+
+def test_pipeline_review_reason_for_ambiguous_digit():
+    """The pipeline surfaces the ambiguous field and flags the extraction."""
+    text = "Test Biscuits\nNutritional Information per 100g\nEnergy 549\nProtein 6 g\nTotal Sugars 2 g\nSodium 50 mg"
+    product, _compliance = run_scan_pipeline(text, ocr_confidence=90.0)
+    assert product["nutrition_extraction"]["ocr_ambiguous_fields"] == ["energy_kcal"]
+    assert product["nutrition_extraction"]["needs_review"] is True

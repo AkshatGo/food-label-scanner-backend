@@ -59,18 +59,31 @@ _GRAM_FIELDS = {field for field, unit in _DEFAULT_UNITS.items() if unit == "g"}
 
 
 def _coerce_ocr_number(value_str, context):
-    """Undo Tesseract's common g->9 substitution in nutrition rows."""
-    if not re.search(r"\b(?:g|gram|grams|mg)\b", context, re.IGNORECASE):
-        if value_str.endswith(".59"):
-            return value_str[:-1]
-        if value_str.endswith("9") and len(value_str) > 1 and "." not in value_str:
-            return value_str[:-1]
-    return value_str
+    """Detect (but never silently mutate) Tesseract's common g->9 substitution.
+
+    A value read on a line with no unit token may be an OCR substitution
+    ("54g" read as "549"). Rewriting it here would corrupt perfectly valid
+    numbers that merely end in 9 (e.g. "Energy 549 kcal" printed without the
+    unit), so the caller only flags the row for review instead (doc 01 §8.2:
+    never silently guess a number that feeds a health formula).
+    """
+    ambiguous = (
+        not re.search(r"\b(?:g|gram|grams|mg)\b", context, re.IGNORECASE)
+        and (value_str.endswith(".59")
+             or (value_str.endswith("9") and len(value_str) > 1 and "." not in value_str))
+    )
+    return value_str, ambiguous
 
 
 def _extract_rows(text):
-    """Pull (canonical_field, value, unit) tuples from nutrition rows."""
+    """Pull (canonical_field, value, unit) tuples from nutrition rows.
+
+    Second return value lists the canonical fields whose numeric value sat on
+    a unit-less line ending in an OCR-ambiguous digit; these must be surfaced
+    for review, not silently scored.
+    """
     rows = []
+    ambiguous_fields = []
     seen = set()
     for line in (text or "").splitlines():
         match = _ROW_RE.search(line)
@@ -82,9 +95,11 @@ def _extract_rows(text):
             continue
         seen.add(canonical)
 
-        value_str = _coerce_ocr_number(match.group(2), line)
+        value_str, ambiguous = _coerce_ocr_number(match.group(2), line)
         value = float(value_str)
         unit = (match.group(3) or "").lower()
+        if ambiguous:
+            ambiguous_fields.append(canonical)
 
         # Unit normalization
         if canonical == "energy_kcal" and unit == "kj":
@@ -103,7 +118,7 @@ def _extract_rows(text):
             unit = _DEFAULT_UNITS[canonical]
 
         rows.append((canonical, round(value, 2), unit))
-    return rows
+    return rows, ambiguous_fields
 
 
 def _detect_basis(text):
@@ -132,10 +147,11 @@ def extract_nutrition(text):
         values: {field: {value, unit}} — normalized per-100
         basis: per_100 | per_serving | unknown
         normalized_to_per_100: bool (True if a per-serving -> per-100 conversion ran)
-        needs_review: bool (basis unknown -> values flagged, never silent)
+        needs_review: bool (basis unknown, or an OCR-ambiguous digit was read)
+        ocr_ambiguous_fields: fields whose unit-less value may hide a g->9 OCR error
         serving_size: grams/ml when per-serving detected
     """
-    rows = _extract_rows(text)
+    rows, ambiguous_fields = _extract_rows(text)
     basis_info = _detect_basis(text)
 
     values = {
@@ -154,10 +170,18 @@ def extract_nutrition(text):
                 for entry in values.values():
                     entry["value"] = round(entry["value"] * factor, 2)
 
-    needs_review = basis_info["basis"] == "unknown" and bool(values)
+    # A digit that may be a substituted "g" must never silently reach the
+    # scoring engine, even when the basis itself was confidently detected.
+    needs_review = (basis_info["basis"] == "unknown" and bool(values)) or bool(ambiguous_fields)
 
     note = "Values read on a per-100g/100ml basis."
-    if normalized:
+    if ambiguous_fields:
+        note = (
+            "Some values were read without a unit and may contain an OCR "
+            "substitution (a trailing 'g' misread as '9'); flagged for user "
+            "review before trusting a health formula."
+        )
+    elif normalized:
         note = (
             "Nutrition values normalized from per-serving to per-100g/100ml "
             "before scoring (doc 04 §6.1)."
@@ -176,6 +200,7 @@ def extract_nutrition(text):
         "normalized_to_per_100": normalized,
         "normalization_factor": round(factor, 4),
         "needs_review": needs_review,
+        "ocr_ambiguous_fields": ambiguous_fields,
         "note": note,
     }
 

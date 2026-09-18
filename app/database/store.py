@@ -85,7 +85,7 @@ class InMemoryCollection:
             for part in parts[:-1]:
                 target = target.setdefault(part, {})
             target[parts[-1]] = value
-        for key, value in update.get("$unset", {}).items():
+        for key in update.get("$unset", {}):
             parts = key.split(".")
             target = doc
             for part in parts[:-1]:
@@ -150,6 +150,9 @@ if config.MONGODB_URI:
         _backend = "memory"
 
 if _backend == "mongodb":
+    import gridfs
+    from gridfs.errors import NoFile
+
     mongo_db["users"].create_index("email", unique=True)
     mongo_db["scans"].create_index("scan_id", unique=True)
     mongo_db["scans"].create_index([("user_id", 1), ("created_at", -1)])
@@ -158,7 +161,18 @@ if _backend == "mongodb":
     scans = _MongoCollectionAdapter(mongo_db["scans"])
     users = _MongoCollectionAdapter(mongo_db["users"])
     products = _MongoCollectionAdapter(mongo_db["products"])
-    fs = __import__("gridfs", fromlist=["GridFS"]).GridFS(mongo_db)
+
+    class _IdempotentGridFS(gridfs.GridFS):
+        """GridFS whose delete() tolerates already-deleted ids so multi-step
+        cleanup (account deletion) can never partially fail on a NoFile."""
+
+        def delete(self, file_id):
+            try:
+                super().delete(file_id)
+            except NoFile:
+                pass
+
+    fs = _IdempotentGridFS(mongo_db)
 else:
     scans = InMemoryCollection()
     users = InMemoryCollection()
