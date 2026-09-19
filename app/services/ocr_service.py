@@ -9,7 +9,14 @@ from io import BytesIO
 
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
-MAX_OCR_SOURCE_PIXELS = 1_500_000
+# OCR budget tuning: the pipeline downscales sources to this pixel budget and
+# no longer enlarges them. The previous budget (1.5MP, then enlarged 2x on
+# each side) quadrupled per-pass work; on a small deployment (0.1 CPU) that
+# pushed Tesseract past its per-pass timeout and scans failed with "Tesseract
+# process timeout" even for crisp photos. Accuracy on 900k-pixel grayscale
+# input remains sufficient for printed labels; see tests/test_scan_pipeline.py.
+MAX_OCR_SOURCE_PIXELS = 900_000
+ENLARGE_FACTOR = 1
 
 
 def _resize_for_ocr(image):
@@ -35,10 +42,13 @@ def _prepare_variants(image):
     variants = []
     for crop in crops:
         gray = ImageOps.grayscale(crop)
-        enlarged = gray.resize(
-            (gray.width * 2, gray.height * 2),
-            Image.Resampling.LANCZOS,
-        )
+        if ENLARGE_FACTOR > 1:
+            enlarged = gray.resize(
+                (gray.width * ENLARGE_FACTOR, gray.height * ENLARGE_FACTOR),
+                Image.Resampling.LANCZOS,
+            )
+        else:
+            enlarged = gray
         contrasted = ImageOps.autocontrast(enlarged)
         sharpened = contrasted.filter(ImageFilter.SHARPEN)
         variants.append(ImageEnhance.Contrast(sharpened).enhance(1.8))
@@ -50,7 +60,7 @@ def _read_variant(pytesseract, image, mode):
         image,
         config=f"--oem 3 --psm {mode}",
         output_type=pytesseract.Output.DICT,
-        timeout=30,
+        timeout=60,
     )
     lines = {}
     confidences = []
@@ -108,3 +118,25 @@ def extract_text(image_bytes: bytes) -> dict:
     if not candidates:
         return {"text": "", "confidence": None, "variants_used": 0}
     return _merge_candidates(candidates)
+
+
+def run_ocr_with_retries(image_bytes: bytes, attempts: int = 2) -> dict:
+    """Extract text, tolerating transient Tesseract failures (timeouts).
+
+    Small deployments periodically hit the per-pass timeout under load. One
+    retry usually succeeds. When every attempt fails, the returned marker
+    carries the reason so the scan can fail honestly instead of being
+    silently scored from missing data.
+    """
+    last_error = None
+    for _ in range(max(1, attempts)):
+        try:
+            return extract_text(image_bytes)
+        except (RuntimeError, OSError) as error:  # pytesseract timeouts raise RuntimeError
+            last_error = error
+    return {
+        "text": "",
+        "confidence": None,
+        "variants_used": 0,
+        "error": f"OCR failed after {attempts} attempts: {last_error}",
+    }

@@ -1,5 +1,5 @@
 // Cache only an explicit public-shell allowlist. No API data or uploaded photos.
-const CACHE = "labellens-shell-v3";
+const CACHE = "labellens-shell-v4";
 const SHELL = [
   "/ui",
   "/static/styles.css",

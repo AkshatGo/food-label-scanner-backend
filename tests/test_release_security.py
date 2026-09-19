@@ -103,7 +103,7 @@ def test_auth_malformed_types_are_client_errors(payload):
 
 def test_replaying_job_does_not_duplicate_products(monkeypatch):
     from app.api import routes
-    monkeypatch.setattr(routes, 'extract_text', lambda _: {'text': '', 'confidence': None})
+    monkeypatch.setattr(routes, 'run_ocr_with_retries', lambda _: {'text': '', 'confidence': None})
     sid = 'replay-' + str(time.time_ns())
     from app.models.scan_model import create_scan_document
     fid = store.fs.put(b'photo')

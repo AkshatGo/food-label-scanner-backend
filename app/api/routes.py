@@ -35,7 +35,7 @@ from ..services.auth_service import AuthError, login, signup, update_conditions,
 from ..services.compliance import evaluate_compliance
 from ..services.compliance_pdf_service import create_compliance_pdf
 from ..services.nlp_cleanup import nlp_reconstruct
-from ..services.ocr_service import extract_text
+from ..services.ocr_service import run_ocr_with_retries
 from ..services.personalization import personalize
 from ..services.scan_pipeline import run_scan_pipeline
 
@@ -305,7 +305,11 @@ def _process_scan(scan_id):
         for name in ("front", "back", "nutrition"):
             if not image_refs.get(name):
                 continue
-            raw = extract_text(store.fs.get(image_refs[name]).read())
+            raw = run_ocr_with_retries(store.fs.get(image_refs[name]).read())
+            if raw.get("error"):
+                raise RuntimeError(
+                    f"OCR failed on the {name} photo: {raw['error']}"
+                )
             reconstruction = nlp_reconstruct(raw["text"])
             per_image[name] = {
                 "raw_text": raw["text"],
@@ -406,12 +410,21 @@ def get_scan(scan_id: str, user=Depends(_current_user)):
         return {"scan_id": scan_id, "status": "processing"}
 
     if status == "failed":
+        stored_error = str(scan.get("error") or "")
+        if "OCR failed" in stored_error or "Tesseract" in stored_error:
+            message = (
+                "The photo could not be processed on the server (it is likely too "
+                "large for the free tier). Retake with a plainer camera angle, or try again — "
+                "transient server overload causes most failures."
+            )
+        else:
+            message = "The scan could not be completed. Please try again."
         return {
             "scan_id": scan_id,
             "status": "failed",
             "error": {
                 "code": "PROCESSING_FAILED",
-                "message": "The scan could not be completed. Please try clearer photos.",
+                "message": message,
                 "http_status": 500,
             },
         }

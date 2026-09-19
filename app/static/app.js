@@ -379,7 +379,7 @@ async function pollScan() {
         resetCapture();
         throw new Error(
           result.error?.message ||
-            "Unable to read this label. Try clearer photos.",
+            "The scan could not be completed. Please try again — most failures are temporary server load, not your photos.",
         );
       }
       if (result.status === "done") {
