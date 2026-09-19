@@ -552,7 +552,8 @@ async function openProduct(id) {
   const ingredients =
     (p.ingredients || [])
       .map((i) => `<span>${esc(typeof i === "string" ? i : i.name)}</span>`)
-      .join("") || "<p>No ingredients were confidently read.</p>";
+      .join("") ||
+    "<p>No ingredients were confidently read. Retake the back photo with the ingredient list filling the frame — a close-up reads far better than the full panel.</p>";
   const counts = p.compliance?.summary?.declarations || {};
   const meter = meterLevel(p);
   $("#productResult").innerHTML =

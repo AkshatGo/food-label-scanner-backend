@@ -31,7 +31,11 @@ _ALTERNATION = "|".join(
 )
 
 _ROW_RE = re.compile(
-    r"^\s*(" + _ALTERNATION + r")\s*(?:\([^)]{0,40}\))?\s*[:=\-]?\s*"
+    # Tesseract commonly prefixes a row with junk (a bullet, a stray quote:
+    # "'Sugars less than 1g"), so allow a short run of non-alphanumeric
+    # characters before the label. Without this, a real nutrition row is
+    # dropped entirely and the field is then "scored as zero" for review.
+    r"^[\W_]{0,4}(" + _ALTERNATION + r")\s*(?:\([^)]{0,40}\))?\s*[:=\-]?\s*"
     r"(?:approx\.?\s*)?(?:less\s+than\s+)?(\d+(?:\.\d+)?)\s*(kcal|kj|mcg|ug|mg|g|iu)?",
     re.IGNORECASE,
 )
@@ -47,6 +51,29 @@ _SERVING_RE = re.compile(
     r"(?:of\s*)?[\(\[]?\s*(\d+(?:\.\d+)?)\s*(g|kg|ml|l)\s*[\)\]]?",
     re.IGNORECASE,
 )
+# US-style panels declare "Serving Size 1 oz (28g/About 15 chips)": the gram
+# equivalent inside the parentheses is the per-serving basis.
+_US_SERVING_RE = re.compile(
+    r"serving\s*size\s*:?\s*(?:[\d.]+\s*(?:oz|cup|piece\s*\(\s*[\d.]+\s*g\s*\))?\s*)?"
+    r"[\(\[]?\s*(\d+(?:\.\d+)?)\s*(g|ml)\b",
+    re.IGNORECASE,
+)
+
+# FDA 2,000-kcal Daily Value references used on US-style panels. Only used to
+# corroborate or repair an OCR-ambiguous reading against the panel's own
+# "% Daily Value" arithmetic — never to invent a value for a row without one.
+_DAILY_VALUE = {
+    "energy_kcal": 2000,
+    "total_fat_g": 65,
+    "saturated_fat_g": 20,
+    "cholesterol_mg": 300,
+    "sodium_mg": 2400,
+    "carbohydrate_g": 300,
+    "fibre_g": 25,
+    "total_sugar_g": 50,
+    "added_sugar_g": 50,
+    "protein_g": 50,
+}
 _PER100_RE = re.compile(r"per\s*100\s*(g|ml)", re.IGNORECASE)
 
 _DEFAULT_UNITS = {
@@ -78,29 +105,84 @@ def _coerce_ocr_number(value_str, context):
 def _extract_rows(text):
     """Pull (canonical_field, value, unit) tuples from nutrition rows.
 
-    Second return value lists the canonical fields whose numeric value sat on
-    a unit-less line ending in an OCR-ambiguous digit; these must be surfaced
-    for review, not silently scored.
+    The same panel row is often OCR'd more than once (full-frame and crop
+    variants); a reading that carries an explicit unit is strictly more
+    trustworthy than a unit-less one (the unit is exactly what the g->9
+    confusion eats), so unit-bearing readings win regardless of order.
+
+    Second/third return values:
+      ambiguous_fields: fields whose chosen reading is unit-less and ends in
+        an OCR-ambiguous digit, minus any the panel's own % Daily Value
+        arithmetic corroborates or repairs.
+      dv_resolved_fields: fields whose value was corroborated or repaired
+        using the stated % Daily Value (recorded for the extraction note).
     """
-    rows = []
-    ambiguous_fields = []
-    seen = set()
+    best = {}
     for line in (text or "").splitlines():
         match = _ROW_RE.search(line)
         if not match:
             continue
         label = re.sub(r"\s+", " ", match.group(1).lower().strip())
         canonical = _FIELD_LOOKUP.get(label)
-        if canonical is None or canonical in seen:
+        if canonical is None:
             continue
-        seen.add(canonical)
-
         value_str, ambiguous = _coerce_ocr_number(match.group(2), line)
         value = float(value_str)
         unit = (match.group(3) or "").lower()
-        if ambiguous:
+        has_unit = bool(unit)
+
+        pct = None
+        pct_match = re.search(r"(\d+(?:\.\d+)?)\s*%", line[match.end():])
+        if pct_match:
+            pct = float(pct_match.group(1))
+
+        current = best.get(canonical)
+        if current is not None and (current["has_unit"] or not has_unit):
+            continue  # keep the first unit-bearing reading
+        best[canonical] = {
+            "value": value,
+            "value_str": value_str,
+            "unit": unit,
+            "has_unit": has_unit,
+            "ambiguous": ambiguous,
+            "pct": pct,
+        }
+
+    ambiguous_fields = []
+    dv_resolved_fields = []
+    for canonical, entry in best.items():
+        if not (entry["ambiguous"] and entry["pct"] is not None):
+            if entry["ambiguous"]:
+                ambiguous_fields.append(canonical)
+            continue
+        rda = _DAILY_VALUE.get(canonical)
+        implied = rda * entry["pct"] / 100.0 if rda else None
+        if not implied or implied <= 0:
+            ambiguous_fields.append(canonical)
+            continue
+        # "459" could be "45" + a substituted trailing 'g': the digit-strip
+        # hypothesis must ALSO agree with the %DV-implied value, otherwise the
+        # contradiction may sit in a misread percentage, not the value.
+        strip_hypothesis = float(entry["value_str"].rstrip("9"))
+        strip_agrees = abs(strip_hypothesis - implied) / implied <= 0.25
+        if abs(entry["value"] - implied) / implied <= 0.25:
+            # The reading agrees with the panel's own %DV math: not corrupt.
+            entry["ambiguous"] = False
+            dv_resolved_fields.append(canonical)
+        elif strip_agrees and entry["value"] / implied >= 5:
+            # e.g. "Total Carbohydrate 159 5%": 159g would be 53% DV, not 5%.
+            # The trailing '9' is a substituted 'g' and the panel's stated %DV
+            # pins the true value (300g * 5% = 15g). Repair transparently.
+            entry["value"] = implied
+            entry["ambiguous"] = False
+            dv_resolved_fields.append(canonical)
+        else:
             ambiguous_fields.append(canonical)
 
+    rows = []
+    for canonical, entry in best.items():
+        value = entry["value"]
+        unit = entry["unit"]
         # Unit normalization
         if canonical == "energy_kcal" and unit == "kj":
             value /= 4.184
@@ -116,9 +198,8 @@ def _extract_rows(text):
             unit = "mg"
         elif not unit:
             unit = _DEFAULT_UNITS[canonical]
-
         rows.append((canonical, round(value, 2), unit))
-    return rows, ambiguous_fields
+    return rows, ambiguous_fields, dv_resolved_fields
 
 
 def _detect_basis(text):
@@ -126,6 +207,13 @@ def _detect_basis(text):
     per100 = _PER100_RE.search(text)
     if per100:
         return {"basis": "per_100", "unit": per100.group(1).lower(), "serving_size": None}
+    us_serving = _US_SERVING_RE.search(text)
+    if us_serving:
+        return {
+            "basis": "per_serving",
+            "unit": us_serving.group(2).lower(),
+            "serving_size": float(us_serving.group(1)),
+        }
     serving = _SERVING_RE.search(text)
     if serving:
         size = float(serving.group(1))
@@ -151,7 +239,7 @@ def extract_nutrition(text):
         ocr_ambiguous_fields: fields whose unit-less value may hide a g->9 OCR error
         serving_size: grams/ml when per-serving detected
     """
-    rows, ambiguous_fields = _extract_rows(text)
+    rows, ambiguous_fields, dv_resolved_fields = _extract_rows(text)
     basis_info = _detect_basis(text)
 
     values = {
@@ -181,6 +269,12 @@ def extract_nutrition(text):
             "substitution (a trailing 'g' misread as '9'); flagged for user "
             "review before trusting a health formula."
         )
+    elif dv_resolved_fields:
+        note = (
+            "Value(s) " + ", ".join(sorted(dv_resolved_fields)) + " were read "
+            "against the panel's own % Daily Value column (the printed unit was "
+            "lost to OCR) and reconciled with it before scoring."
+        )
     elif normalized:
         note = (
             "Nutrition values normalized from per-serving to per-100g/100ml "
@@ -201,6 +295,7 @@ def extract_nutrition(text):
         "normalization_factor": round(factor, 4),
         "needs_review": needs_review,
         "ocr_ambiguous_fields": ambiguous_fields,
+        "dv_resolved_fields": dv_resolved_fields,
         "note": note,
     }
 

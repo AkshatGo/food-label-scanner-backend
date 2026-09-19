@@ -16,15 +16,30 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 # process timeout" even for crisp photos. Accuracy on 900k-pixel grayscale
 # input remains sufficient for printed labels; see tests/test_scan_pipeline.py.
 MAX_OCR_SOURCE_PIXELS = 900_000
+ENLARGE_LINEAR_CAP = 4  # safety bound for absurd thumbnails (e.g. 50x50)
 ENLARGE_FACTOR = 1
 
 
 def _resize_for_ocr(image):
-    """Bound OCR work for high-resolution mobile photos."""
+    """Normalize any source toward the OCR pixel budget, up or down.
+
+    Large photos are downscaled to the budget (the old 2x-enlarge path once
+    blew the per-pass timeout on small deployments). Sources *smaller* than
+    the budget are upscaled toward it: sub-budget uploads (web-saved images,
+    messaging-app forwards) carry print too small for Tesseract's
+    un-upscaled expectations — a real 294px-wide upload was read as
+    "Total Carbohydrate 159" instead of "15g", tripping the ambiguity
+    review gate and withholding the rating. Upscaled work never exceeds the
+    budget a normal photo already costs, so this is timeout-safe.
+    """
     pixel_count = image.width * image.height
-    if pixel_count <= MAX_OCR_SOURCE_PIXELS:
+    if pixel_count == MAX_OCR_SOURCE_PIXELS:
         return image
     scale = (MAX_OCR_SOURCE_PIXELS / pixel_count) ** 0.5
+    if pixel_count > MAX_OCR_SOURCE_PIXELS:
+        pass  # plain downscale to the budget
+    else:
+        scale = min(scale, ENLARGE_LINEAR_CAP)
     return image.resize(
         (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
         Image.Resampling.LANCZOS,

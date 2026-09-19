@@ -16,7 +16,8 @@ OCR_FIXES = (
     (r"\bCaichum\b", "Calcium"),
     (r"\bVepetatte\b|\bVezetatie\b", "Vegetable"),
     (r"\bSenfiowec\b", "Sunflower"),
-    (r"\bFegrediants?\b|\bIngedients\b", "Ingredients"),
+    (r"\bFegrediants?\b|\bIngedients\b|\bLngredients?\b|\bIngredierits\b|\bIngrediernts\b", "Ingredients"),
+    (r"\bList\s+of\s+Lngredients?\b|\bListoflngredients\b", "List of Ingredients"),
     (r"\bSat\.\s*I\b", "Salt"),
     (r"\bSat\.\s*\|", "Salt"),
 )
