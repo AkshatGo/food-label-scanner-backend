@@ -116,6 +116,9 @@ def _extract_rows(text):
         arithmetic corroborates or repairs.
       dv_resolved_fields: fields whose value was corroborated or repaired
         using the stated % Daily Value (recorded for the extraction note).
+    A subset-consistency pass may also repair total_sugar_g against the
+    carbohydrate row; those fields are reported via subset_resolved_fields
+    on the extraction result, not here.
     """
     best = {}
     for line in (text or "").splitlines():
@@ -179,6 +182,35 @@ def _extract_rows(text):
         else:
             ambiguous_fields.append(canonical)
 
+    # Subset consistency: sugars are a subset of carbohydrates, so a
+    # unit-less sugars reading that is physically impossible against the
+    # (already reconciled) carbohydrate row — e.g. "Sugars less than 19" on a
+    # panel whose total carbohydrate is 15g — is repaired to the digit-strip
+    # hypothesis ("1g") when that restores coherence. A reading that fits
+    # within carbohydrates as-read stays flagged: it is possible, just
+    # unverified, and must not be silently chosen over the strip hypothesis.
+    subset_resolved_fields = []
+    carbs_entry = best.get("carbohydrate_g")
+    sugar = best.get("total_sugar_g")
+    if (
+        carbs_entry is not None
+        and not carbs_entry["ambiguous"]
+        and sugar is not None
+        and sugar["ambiguous"]
+        and sugar["pct"] is None
+    ):
+        stripped = sugar["value_str"].rstrip("9")
+        if stripped:
+            stripped_value = float(stripped)
+            if sugar["value"] > carbs_entry["value"] and stripped_value <= carbs_entry["value"]:
+                sugar["value"] = stripped_value
+                sugar["ambiguous"] = False
+                # The %DV pass already queued it as ambiguous (no pct column);
+                # the repair clears that flag and must clear the list too.
+                if "total_sugar_g" in ambiguous_fields:
+                    ambiguous_fields.remove("total_sugar_g")
+                subset_resolved_fields.append("total_sugar_g")
+
     rows = []
     for canonical, entry in best.items():
         value = entry["value"]
@@ -199,7 +231,7 @@ def _extract_rows(text):
         elif not unit:
             unit = _DEFAULT_UNITS[canonical]
         rows.append((canonical, round(value, 2), unit))
-    return rows, ambiguous_fields, dv_resolved_fields
+    return rows, ambiguous_fields, dv_resolved_fields, subset_resolved_fields
 
 
 def _detect_basis(text):
@@ -239,7 +271,7 @@ def extract_nutrition(text):
         ocr_ambiguous_fields: fields whose unit-less value may hide a g->9 OCR error
         serving_size: grams/ml when per-serving detected
     """
-    rows, ambiguous_fields, dv_resolved_fields = _extract_rows(text)
+    rows, ambiguous_fields, dv_resolved_fields, subset_resolved = _extract_rows(text)
     basis_info = _detect_basis(text)
 
     values = {
@@ -275,6 +307,12 @@ def extract_nutrition(text):
             "against the panel's own % Daily Value column (the printed unit was "
             "lost to OCR) and reconciled with it before scoring."
         )
+    elif subset_resolved:
+        note = (
+            "The sugars value was read without its unit (OCR); it was "
+            "reconciled with the carbohydrate row it must fit within "
+            "(sugars are a subset of carbohydrates) before scoring."
+        )
     elif normalized:
         note = (
             "Nutrition values normalized from per-serving to per-100g/100ml "
@@ -296,6 +334,7 @@ def extract_nutrition(text):
         "needs_review": needs_review,
         "ocr_ambiguous_fields": ambiguous_fields,
         "dv_resolved_fields": dv_resolved_fields,
+        "subset_resolved_fields": subset_resolved,
         "note": note,
     }
 

@@ -109,6 +109,28 @@ def test_unitless_value_without_pct_stays_ambiguous():
 # --- US Serving Size basis -------------------------------------------------------
 
 
+def test_sugars_impossible_against_carbs_is_repaired_by_subset_rule():
+    # The exact second-scan failure: sugars read unit-less as 19 while the
+    # carbohydrate row (already %DV-reconciled) totals 15g. Sugars are a
+    # subset of carbohydrates, so 19 > 15 is impossible; the digit-strip
+    # hypothesis ("1g") restores coherence and the flag clears.
+    extracted = extract_nutrition("Total Carbohydrate 159 5%\nSugars less than 19")
+    assert extracted["values"]["carbohydrate_g"]["value"] == 15.0
+    assert extracted["values"]["total_sugar_g"]["value"] == 1.0
+    assert "total_sugar_g" not in extracted["ocr_ambiguous_fields"]
+    assert "total_sugar_g" in extracted["subset_resolved_fields"]
+
+
+def test_sugars_within_carbs_stays_flagged_not_silently_repaired():
+    # 19g of unit-less sugars inside 30g of carbohydrates is *possible* (it
+    # could be 1g misread, or genuinely 19): keep it flagged for review
+    # rather than guessing — only the impossible case is repaired.
+    extracted = extract_nutrition("Total Carbohydrate 30g\nSugars 19")
+    assert "total_sugar_g" in extracted["ocr_ambiguous_fields"]
+    assert extracted["values"]["total_sugar_g"]["value"] == 19.0
+    assert extracted["needs_review"] is True
+
+
 def test_us_serving_size_line_is_detected_as_per_serving():
     extracted = extract_nutrition(
         "Serving Size 1 oz (28g/About 15 chips)\nCalories 160"
