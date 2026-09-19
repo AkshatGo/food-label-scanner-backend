@@ -3,6 +3,7 @@ import io
 import time
 import pytest
 from fastapi.testclient import TestClient
+from gridfs.errors import NoFile
 from PIL import Image
 from app.main import app
 from app.database import store
@@ -135,7 +136,7 @@ def test_delete_requires_password_and_erases_owned_data():
         assert store.users.find_one({'user_id': owner['user_id']}) is None
         assert store.products.find_one({'product_id': sid}) is None
         assert store.scans.find_one({'scan_id': sid}) is None
-        with pytest.raises(Exception):
+        with pytest.raises(NoFile):
             store.fs.get(fid)
 
 

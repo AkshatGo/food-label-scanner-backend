@@ -30,21 +30,11 @@
   inset: 0;
   overflow: hidden;
 }
-/* Fill level: the p10..p100 class on .meter-stars clips the top svg layer;
-   the default 50% renders the half-star clip. */
+/* The .fg layer only ever renders a half star: the 50% clip is the point. */
 .meter-stars .fg svg {
   max-width: 50%;
 }
-.meter-stars.p10 .fg svg { max-width: 10%; }
-.meter-stars.p20 .fg svg { max-width: 20%; }
-.meter-stars.p30 .fg svg { max-width: 30%; }
-.meter-stars.p40 .fg svg { max-width: 40%; }
-.meter-stars.p50 .fg svg { max-width: 50%; }
-.meter-stars.p60 .fg svg { max-width: 60%; }
-.meter-stars.p70 .fg svg { max-width: 70%; }
-.meter-stars.p80 .fg svg { max-width: 80%; }
-.meter-stars.p90 .fg svg { max-width: 90%; }
-.meter-stars.p100 .fg svg { max-width: 100%; }
+.meter-stars .fill path,
 .meter-stars .fg path {
   fill: var(--accent);
 }

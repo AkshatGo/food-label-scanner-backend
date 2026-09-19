@@ -1,6 +1,6 @@
 """Scan pipeline integration tests — synthetic OCR text through the full path."""
 
-from app.services.scan_pipeline import build_structured_product, run_scan_pipeline
+from app.services.scan_pipeline import run_scan_pipeline
 
 
 BISCUIT_LABEL = """Crunchy Biscuits
@@ -52,7 +52,7 @@ def test_pipeline_resolves_ins_and_detects_allergens():
     product, _compliance = run_scan_pipeline(BISCUIT_LABEL, ocr_confidence=88.0)
     names = [entry["name"] for entry in product["ingredients"]]
     assert any("Sodium carbonate" in name or "500" in str(entry.get("ins_number", ""))
-               for entry, name in zip(product["ingredients"], names))
+               for entry, name in zip(product["ingredients"], names, strict=True))
     detected = product["allergens"]["detected"]
     assert "Cereals containing gluten" in detected
     assert "Milk" in detected

@@ -425,17 +425,20 @@ function meterLevel(p) {
 const STAR_PATH =
   "M10 1.2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L10 13.6l-4.8 2.5.9-5.4L2.2 6.9l5.4-.8z";
 function meterStars(level, extraClass = "") {
+  // level is half-star units (0..10): 7 => 3.5 stars = 3 full + 1 half.
+  const full = Math.floor(level / 2);
+  const half = level % 2 === 1;
   const fill = level * 10;
   const star = (i) =>
     `<span class="star">`
     + `<svg class="bg" viewBox="0 0 20 20" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`
-    + (i < level
-        ? `<svg viewBox="0 0 20 20" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`
-        : i === level
+    + (i < full
+        ? `<svg class="fill" viewBox="0 0 20 20" aria-hidden="true"><path d="${STAR_PATH}"/></svg>`
+        : i === full && half
           ? `<span class="fg"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="${STAR_PATH}"/></svg></span>`
           : "")
     + `</span>`;
-  return `<span class="meter-stars p${level * 10} ${extraClass}" role="img" aria-label="${fill}% of 5 stars">`
+  return `<span class="meter-stars ${extraClass}" role="img" aria-label="${fill}% of 5 stars">`
     + Array.from({ length: 5 }, (_, i) => star(i)).join("")
     + `</span>`;
 }
