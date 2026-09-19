@@ -61,6 +61,10 @@ token = r.json()["token"]
 user_id = r.json()["user_id"]
 print(f"[3] signup OK (user {user_id})")
 
+# Authenticate every subsequent call via bearer token (works over plain HTTP
+# in production-mode pre-flight, where the Secure session cookie won't round-trip).
+requests.headers["Authorization"] = f"Bearer {token}"
+
 r = requests.post(f"{BASE}/api/v1/auth/login",
                   json={"email": email, "password": "password123"})
 assert r.status_code == 200
