@@ -17,7 +17,7 @@ services:
       - key: ALLOWED_ORIGINS
         # Exact HTTPS origin of the deployed app (no wildcard). Adjust if
         # Render assigns a different hostname than the default.
-        value: https://labelens.onrender.com
+        value: https://labelens-lbzo.onrender.com
       - key: MONGODB_URI
         sync: false # set in the dashboard: Atlas SRV connection string
       - key: JWT_SECRET

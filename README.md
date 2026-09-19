@@ -1,5 +1,10 @@
 # LabelLens — Mobile app and API
 
+**Try the live prototype:** <https://labelens-lbzo.onrender.com> — open it on your
+phone and install it as a PWA (Android/Chrome: ⋮ → *Install app*; iPhone/Safari:
+Share → *Add to Home Screen*). Render's free tier sleeps after ~15 min idle, so
+the first load can take up to a minute to wake.
+
 The mobile-first app is served at `/ui` (browser visits to `/` redirect there).
 It includes camera photo capture, an account-backed shelf, nutrition results,
 comparison, optional dietary preferences, PDF reports, data export and account
@@ -9,7 +14,8 @@ stores only the public interface; scans and personal information require a conne
 Production deployment instructions and outstanding release gates:
 [`docs/08_production_release.md`](docs/08_production_release.md).
 Visual direction: [`DESIGN.md`](DESIGN.md). Replit configuration is included.
-The release is not yet deployed or verified against a managed production database.
+The release is deployed on Render (free tier) with MongoDB Atlas storage and
+verified end-to-end in production mode (real OCR scan → INR rating → compliance PDF).
 
 **API privacy change:** scan uploads, polling, images, products and PDF reports now
 require authentication and are scoped to the signed-in owner. The browser uses an
