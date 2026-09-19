@@ -20,6 +20,21 @@ OCR-based food label scanner implementing the full LabelLens spec: **FSSAI India
 
 The full engineering documentation set lives in [`docs/`](docs/) (00_README → 07_api_reference).
 
+## Feature demo: the INR rating meter
+
+Every trustworthy scan gets an **Indian Nutrition Rating out of 5** (half-star
+steps), rendered as a meter on the result screen and a compact chip with the
+numeric score on shelf cards. Consistent with the honesty rules, the meter is
+**withheld** — no stars — whenever the rating isn't trustworthy: low OCR
+confidence, unverified readings, or INR-exempt products show their honest state
+instead. The screenshots below come from a real end-to-end scan of a rendered
+test label (OCR → extraction → INR formula → 2.0★).
+
+| Result screen (mobile) | Rating meter | Shelf card |
+|---|---|---|
+| <img src="screenshots/shot-result-mobile.png" alt="LabelLens result screen: scanned product with nutrition panel and the five-star INR rating meter under the score numeral" width="390" /> | <img src="screenshots/shot-meter-closeup.png" alt="Close-up of the rating meter: two filled tomato stars and three empty outlines under the OUT OF 5 caption" width="390" /> | <img src="screenshots/shot-card-meter.png" alt="Shelf product card showing the compact star meter chip with a 2/5 numeric badge" width="390" /> |
+> **Reading the meter:** 2.0★ = two filled accent stars, empty outlines for the rest; 2.5★ renders a half-filled star. Filled stars use the brand accent (`--accent`), empty ones the paper tone (`--line`) — see [`DESIGN.md`](DESIGN.md).
+
 ## What's implemented
 
 | Spec item | Source | Status |
