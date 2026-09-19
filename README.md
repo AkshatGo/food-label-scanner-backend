@@ -5,6 +5,11 @@ phone and install it as a PWA (Android/Chrome: ⋮ → *Install app*; iPhone/Saf
 Share → *Add to Home Screen*). Render's free tier sleeps after ~15 min idle, so
 the first load can take up to a minute to wake.
 
+<p align="center">
+  <img src="screenshots/qr-prototype.png" alt="QR code linking to the live LabelLens prototype at https://labelens-lbzo.onrender.com" width="180" /><br/>
+  <sub>Scan to open the live prototype on your phone — then install it as a PWA.</sub>
+</p>
+
 The mobile-first app is served at `/ui` (browser visits to `/` redirect there).
 It includes camera photo capture, an account-backed shelf, nutrition results,
 comparison, optional dietary preferences, PDF reports, data export and account
