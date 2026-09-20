@@ -409,19 +409,29 @@ $("#resumeScan").onclick = pollScan;
 function trustworthy(p) {
   return !p.needs_review && p.inr?.eligible && p.inr?.status === "calculated";
 }
+// A rating computed from an incomplete panel INFLATES (missing negatives
+// score zero), so the backend now withholds stars entirely for those —
+// no number is safer than an unreliable number.
+function withheld(p) {
+  return Boolean(p.inr?.withheld);
+}
 function rating(p) {
   return trustworthy(p)
     ? `${p.inr.rating_stars} / 5`
-    : typeof p.inr?.rating_stars === "number" && p.inr?.eligible
-      ? `~${p.inr.rating_stars} / 5 (verify)`
-      : p.inr?.eligible
-        ? "Review needed"
-        : "Not rated";
+    : withheld(p)
+      ? "Retake needed"
+      : typeof p.inr?.rating_stars === "number" && p.inr?.eligible
+        ? `~${p.inr.rating_stars} / 5 (verify)`
+        : p.inr?.eligible
+          ? "Review needed"
+          : "Not rated";
 }
-// Draft INR rating as a 0-10 half-star level. Shown whenever a number
-// exists — under review it renders as a clearly provisional meter (amber,
-// "PROVISIONAL" tag) rather than being hidden behind a dash.
+// Draft INR rating as a 0-10 half-star level. Shown whenever a trusted
+// number exists — under review it renders as a clearly provisional meter
+// (amber, "PROVISIONAL" tag). Withheld ratings (incomplete panel) have no
+// number at all, so no meter.
 function meterLevel(p) {
+  if (withheld(p)) return null;
   if (!p.inr?.eligible || typeof p.inr.rating_stars !== "number") return null;
   return Math.max(0, Math.min(10, Math.round(p.inr.rating_stars * 2)));
 }
@@ -460,8 +470,15 @@ function meterStars(level, extraClass = "") {
 }
 function ratingBadge(p) {
   const level = meterLevel(p);
-  if (level === null) return `<span class="score-chip">${esc(rating(p))}</span>`;
-  return `<span class="score-chip meter-chip">${meterStars(level)}<span>${esc(p.inr.rating_stars)}/5</span></span>`;
+  if (level === null) {
+    const chip = withheld(p)
+      ? `<span class="score-chip chip-withheld">${esc(rating(p))}</span>`
+      : `<span class="score-chip">${esc(rating(p))}</span>`;
+    return chip;
+  }
+  const provisional = meterIsProvisional(p);
+  const starClass = provisional ? "meter-chip meter-chip-provisional" : "meter-chip";
+  return `<span class="score-chip ${starClass}">${meterStars(level, provisional ? "meter-provisional" : "")}<span>${esc(p.inr.rating_stars)}/5</span></span>`;
 }
 function productCard(p) {
   const date = p.created_at
@@ -577,7 +594,7 @@ async function openProduct(id) {
   const meter = meterLevel(p);
   const provisional = meterIsProvisional(p);
   $("#productResult").innerHTML =
-    `<div class="result-heading"><div><span class="eyebrow">YOUR LABEL, DECODED</span><h1>${esc(p.product_name)}</h1><p>${esc(p.brand || "Brand not read")} · ${esc(p.net_quantity || "Pack size not read")}</p></div><div class="result-score${meter !== null && provisional ? " score-provisional" : ""}"><strong>${p.inr?.eligible && typeof p.inr.rating_stars === "number" ? esc(p.inr.rating_stars) : "—"}</strong>${meter !== null ? meterStars(meter, provisional ? "result-meter meter-provisional" : "result-meter") : ""}<small>${provisional ? `PROVISIONAL · ~${esc(p.inr.rating_stars)}/5 · VERIFY LABEL` : trustworthy(p) ? "OUT OF 5 · DRAFT INR" : "NOT RATED"}</small></div></div>${review ? `<div class="review-notice"><strong>Check these readings against the pack.</strong><ul>${(p.review_reasons?.length ? p.review_reasons : ["Incomplete readings: the rating is withheld until values can be verified."]).map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>` : ""}<div class="result-columns"><div><section class="reading-block"><h2>The nutrition panel</h2><p>Per ${esc(panelBasisLabel(p))} · ${esc(p.nutrition_extraction?.basis || "Basis not read")}</p><table class="nutrition-table"><tbody>${nutrients.map(([key, label, unit]) => `<tr><td>${label}</td><td>${value(nutrition[key], unit)}</td></tr>`).join("")}</tbody></table></section><section class="reading-block"><h2>Inside the ingredients</h2><div class="ingredient-tags">${ingredients}</div><p>Allergens detected: ${esc((p.allergens?.detected || []).join(", ") || "None detected — this does not establish allergen safety.")}</p></section></div><div><section class="reading-block"><h2>In your context</h2><div id="guidanceResult">Loading your preferences…</div></section><section class="reading-block"><h2>The label checklist</h2><div class="compliance-counts">${Object.entries(
+    `<div class="result-heading"><div><span class="eyebrow">YOUR LABEL, DECODED</span><h1>${esc(p.product_name)}</h1><p>${esc(p.brand || "Brand not read")} · ${esc(p.net_quantity || "Pack size not read")}</p></div><div class="result-score${meter !== null && provisional ? " score-provisional" : ""}"><strong>${p.inr?.eligible && typeof p.inr.rating_stars === "number" ? esc(p.inr.rating_stars) : "—"}</strong>${meter !== null ? meterStars(meter, provisional ? "result-meter meter-provisional" : "result-meter") : ""}<small>${withheld(p) ? "NOT ENOUGH READ · RETAKE" : provisional ? `PROVISIONAL · ~${esc(p.inr.rating_stars)}/5 · VERIFY LABEL` : trustworthy(p) ? "OUT OF 5 · DRAFT INR" : "NOT RATED"}</small></div></div>${review ? `<div class="review-notice"><strong>Check these readings against the pack.</strong><ul>${(p.review_reasons?.length ? p.review_reasons : ["Incomplete readings: the rating is withheld until values can be verified."]).map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>` : ""}<div class="result-columns"><div><section class="reading-block"><h2>The nutrition panel</h2><p>Per ${esc(panelBasisLabel(p))} · ${esc(p.nutrition_extraction?.basis || "Basis not read")}</p><table class="nutrition-table"><tbody>${nutrients.map(([key, label, unit]) => `<tr><td>${label}</td><td>${value(nutrition[key], unit)}</td></tr>`).join("")}</tbody></table></section><section class="reading-block"><h2>Inside the ingredients</h2><div class="ingredient-tags">${ingredients}</div><p>Allergens detected: ${esc((p.allergens?.detected || []).join(", ") || "None detected — this does not establish allergen safety.")}</p></section></div><div><section class="reading-block"><h2>In your context</h2><div id="guidanceResult">Loading your preferences…</div></section><section class="reading-block"><h2>The label checklist</h2><div class="compliance-counts">${Object.entries(
       counts,
     )
       .map(

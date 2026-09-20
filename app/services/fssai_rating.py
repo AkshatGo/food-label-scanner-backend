@@ -251,6 +251,39 @@ def calculate_inr(per100, *, category="solid", fv_percent=None, nlm_percent=None
     score = baseline - positive_total
     stars = _stars_solid(score) if category == "solid" else _stars_liquid(score)
 
+    # Missing score-driving fields are filled as zero in the arithmetic, which
+    # REMOVES negative points — the number inflates as the read degrades (a
+    # scan that reads nothing at all would "earn" 5/5). A rating computed
+    # from an incomplete panel is therefore withheld outright: no stars, a
+    # retake-guiding reason, and the missing list for the review banner.
+    if missing:
+        return {
+            "status": "estimated_missing_as_zero",
+            "eligible": True,
+            "withheld": True,
+            "withheld_reason": (
+                "Not enough of the nutrition panel was read to rate this "
+                "product. Retake the photo with the full nutrition table "
+                "filling the frame."
+            ),
+            "category": category,
+            "basis": (
+                f"FSSAI 2022 draft INR framework; Category-"
+                f"{'I (solid)' if category == 'solid' else 'II (liquid, non-dairy)'}; "
+                f"per {'100g' if category == 'solid' else '100ml'}, as sold"
+            ),
+            "formula_version": INR_FORMULA_VERSION,
+            "inr_score": None,
+            "rating_stars": None,
+            "rating_display": "—",
+            "baseline_points": baseline,
+            "negative_points": negative,
+            "positive_points": positive,
+            "positive_points_total": positive_total,
+            "capped_factors": capped,
+            "missing_fields_treated_as_zero": missing,
+        }
+
     return {
         "status": "estimated_missing_as_zero" if missing else "calculated",
         "eligible": True,

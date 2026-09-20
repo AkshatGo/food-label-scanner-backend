@@ -64,6 +64,18 @@
   fill: none;
   stroke: #cbb89a;
 }
+.meter-chip-provisional .meter-stars.meter-provisional .star svg.fill {
+  fill: #a8681c;
+}
+.meter-chip-provisional .meter-stars.meter-provisional .star svg.bg {
+  fill: none;
+  stroke: #cbb89a;
+}
+/* Withheld rating (incomplete panel): neutral chip, retake guidance. */
+.score-chip.chip-withheld {
+  color: #6b7264;
+  border: 1px dashed #c4bba8;
+}
 .note-number {
   white-space: nowrap;
   flex-shrink: 0;
