@@ -35,7 +35,7 @@ from ..services.auth_service import AuthError, login, signup, update_conditions,
 from ..services.compliance import evaluate_compliance
 from ..services.compliance_pdf_service import create_compliance_pdf
 from ..services.nlp_cleanup import nlp_reconstruct
-from ..services.ocr_service import run_ocr_with_retries
+from ..services.ocr_service import BLURRY_IMAGE_ERROR, run_ocr_with_retries
 from ..services.personalization import personalize
 from ..services.scan_pipeline import run_scan_pipeline
 
@@ -411,6 +411,20 @@ def get_scan(scan_id: str, user=Depends(_current_user)):
 
     if status == "failed":
         stored_error = str(scan.get("error") or "")
+        if BLURRY_IMAGE_ERROR in stored_error:
+            return {
+                "scan_id": scan_id,
+                "status": "failed",
+                "error": {
+                    "code": "BLURRY_IMAGE",
+                    "message": (
+                        "The photo is too blurry to read reliably. Retake it up "
+                        "close and steady — fill the frame with the label, and "
+                        "rest the packet on a table if lighting is dim."
+                    ),
+                    "http_status": 422,
+                },
+            }
         if "OCR failed" in stored_error or "Tesseract" in stored_error:
             message = (
                 "The photo could not be processed on the server (it is likely too "

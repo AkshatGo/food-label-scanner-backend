@@ -1,13 +1,40 @@
 """OCR service: off-the-shelf Tesseract behind an internal interface (ADR-2).
 
-Preprocessing (grayscale -> enlarge -> autocontrast -> sharpen -> contrast)
-happens here so downstream code only sees text + confidence. The engine is
-swappable without touching the pipeline.
+Preprocessing happens here so downstream code only sees text + confidence.
+Two toolkits, two jobs (they are not competitors):
+
+- **PIL** owns decode, EXIF orientation, pixel-budget resize, tone
+  (autocontrast/sharpen/contrast) — the simple, deterministic operations.
+- **OpenCV** owns the geometric/adaptive operations phone photos need and
+  PIL was never built for: variance-of-Laplacian blur scoring, skew
+  correction (deskew), and adaptive thresholding for uneven lighting
+  (glare/shadow across a curved packet).
+
+The engine is swappable without touching the pipeline.
 """
 
 from io import BytesIO
 
+import numpy
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+
+try:  # optional hardening: headless build keeps Docker slim
+    import cv2
+except ImportError:  # pragma: no cover - cv2 ships in requirements
+    cv2 = None
+
+# A photo below this variance-of-Laplacian blur score is rejected before
+# OCR: hopeless input burns 30-60s of small-deployment CPU and returns
+# hallucinated rows that the honesty gate then has to catch. Calibration
+# sweep (synthetic label, 44px glyphs at OCR budget): crisp ~400, sigma=1.0
+# ~71 (still fully readable), sigma=2.0 ~9, hard shake/box-blur <6. Real
+# packet photos carry smaller effective glyphs, so the readable band sits
+# *lower* than the synthetic sweep — the gate is therefore set deep in the
+# hopeless zone (15) to only reject input no preprocessing could rescue,
+# never merely imperfect photos. Deskew + the adaptive-threshold variant
+# handle the degraded-but-readable middle band instead of a rejection.
+MIN_BLUR_SCORE = 15.0
+BLURRY_IMAGE_ERROR = "BLURRY_IMAGE"
 
 # OCR budget tuning: the pipeline downscales sources to this pixel budget and
 # no longer enlarges them. The previous budget (1.5MP, then enlarged 2x on
@@ -46,9 +73,83 @@ def _resize_for_ocr(image):
     )
 
 
+def _to_cv(pil_image):
+    """PIL (mode L or RGB) -> BGR/gray numpy array for OpenCV."""
+    array = numpy.asarray(pil_image.convert("RGB"))
+    return cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
+
+
+def _to_pil(cv_image):
+    """OpenCV BGR/gray numpy array -> PIL (mode RGB or L)."""
+    if cv_image.ndim == 2:
+        return Image.fromarray(cv_image, mode="L")
+    return Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB), mode="RGB")
+
+
+def _blur_score(pil_image):
+    """Variance of the Laplacian: the standard single-number focus metric.
+
+    Sharp printed text carries many high-frequency edges -> high variance.
+    Motion/defocus blur smooths edges -> variance collapses. Cheap (one
+    convolution at OCR budget) and robust to scene content.
+    """
+    gray = cv2.cvtColor(_to_cv(pil_image), cv2.COLOR_BGR2GRAY)
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
+def _deskew(pil_image, max_angle=10.0):
+    """Rotate mild skew (level horizon estimate) back to 0deg.
+
+    Tesseract accuracy degrades sharply past ~2deg. The angle comes from
+    the minimum-area rectangle around binarized ink: real packets fill the
+    frame edge-to-edge, so the rectangle angle tracks the camera roll.
+    Angles beyond +/-max_angle are treated as unreliable estimates and left
+    alone (a wrong guess would rotate a fine photo into garbage).
+    """
+    gray = cv2.cvtColor(_to_cv(pil_image), cv2.COLOR_BGR2GRAY)
+    binary = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 35, 15
+    )
+    coords = cv2.findNonZero(binary)
+    if coords is None:
+        return pil_image
+    angle = cv2.minAreaRect(coords)[-1]
+    if angle > 45:
+        angle -= 90
+    if abs(angle) < 0.3 or abs(angle) > max_angle:
+        return pil_image
+    height, width = gray.shape
+    matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1.0)
+    rotated = cv2.warpAffine(
+        gray,
+        matrix,
+        (width, height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+    return _to_pil(rotated)
+
+
+def _adaptive_threshold_variant(pil_image):
+    """Adaptive-threshold read for glare/shadow across a curved packet.
+
+    Global tone (PIL autocontrast/contrast) cannot separate print from
+    background when one side of the label is lit and the other shadowed;
+    a per-neighborhood threshold can. Returned in normal (dark-ink-on-
+    paper) polarity for Tesseract.
+    """
+    gray = cv2.cvtColor(_to_cv(pil_image), cv2.COLOR_BGR2GRAY)
+    binary = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 12
+    )
+    return _to_pil(binary)
+
+
 def _prepare_variants(image):
     """Create readable label crops without changing the source image."""
     image = _resize_for_ocr(image)
+    if cv2 is not None:
+        image = _deskew(image)
     width, height = image.size
     crops = [
         image,
@@ -67,6 +168,8 @@ def _prepare_variants(image):
         contrasted = ImageOps.autocontrast(enlarged)
         sharpened = contrasted.filter(ImageFilter.SHARPEN)
         variants.append(ImageEnhance.Contrast(sharpened).enhance(1.8))
+    if cv2 is not None:
+        variants.append(_adaptive_threshold_variant(image))
     return variants
 
 
@@ -124,6 +227,15 @@ def extract_text(image_bytes: bytes) -> dict:
         raise RuntimeError("OCR is unavailable; install the backend requirements") from error
 
     image = ImageOps.exif_transpose(Image.open(BytesIO(image_bytes))).convert("RGB")
+    if cv2 is not None:
+        score = _blur_score(_resize_for_ocr(image))
+        if score < MIN_BLUR_SCORE:
+            return {
+                "text": "",
+                "confidence": None,
+                "variants_used": 0,
+                "error": f"{BLURRY_IMAGE_ERROR}: variance-of-Laplacian {score:.1f} is below {MIN_BLUR_SCORE:g}",
+            }
     candidates = []
     for variant in _prepare_variants(image):
         result = _read_variant(pytesseract, variant, 6)

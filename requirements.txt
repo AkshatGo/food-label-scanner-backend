@@ -11,3 +11,4 @@ PyJWT
 httpx
 pytest
 requests
+opencv-python-headless

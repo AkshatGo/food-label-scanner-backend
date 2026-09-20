@@ -5,7 +5,7 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from app.main import app
 
@@ -26,8 +26,16 @@ def auth_headers(client):
 
 
 def _png_bytes(color=(200, 100, 50), size=(600, 800)):
+    """A realistic stand-in for a label photo: solid color plus printed text.
+
+    The OpenCV blur gate correctly rejects pure flat-color uploads (variance
+    of the Laplacian is 0.0 — no edges means no text to read), so fixtures
+    carry renderable text like a real packet photo would.
+    """
     buffer = io.BytesIO()
-    Image.new("RGB", size, color).save(buffer, format="PNG")
+    image = Image.new("RGB", size, color)
+    ImageDraw.Draw(image).text((30, 30), "Nutrition Energy 450 kcal", fill="white")
+    image.save(buffer, format="PNG")
     return buffer.getvalue()
 
 

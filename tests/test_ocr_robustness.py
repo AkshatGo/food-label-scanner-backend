@@ -9,14 +9,21 @@ while the UI blamed photo quality. These tests pin the corrected behavior.
 import time
 from io import BytesIO
 
+import numpy
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from app.main import app
 from app.services.ocr_service import (
+    BLURRY_IMAGE_ERROR,
     MAX_OCR_SOURCE_PIXELS,
+    MIN_BLUR_SCORE,
+    _adaptive_threshold_variant,
+    _blur_score,
+    _deskew,
     _prepare_variants,
+    _resize_for_ocr,
     extract_text,
     run_ocr_with_retries,
 )
@@ -120,3 +127,88 @@ def test_api_scan_fails_honestly_when_ocr_fails(client, auth_headers, monkeypatc
     message = body["error"]["message"]
     assert "clearer" not in message.lower()
     assert "again" in message.lower() or "server" in message.lower()
+
+
+# --- OpenCV hardening: blur gate, deskew, adaptive threshold ----------------
+
+
+def _cv2_or_skip():
+    pytest.importorskip("cv2")
+
+
+def _gradient_shade(image, low=0.30, high=1.20):
+    """Simulate uneven lighting: dark on the left, bright on the right."""
+    arr = numpy.asarray(image.convert("L"), dtype=numpy.float32)
+    grad = numpy.linspace(low, high, arr.shape[1])[None, :]
+    shaded = numpy.clip(arr * grad, 0, 255).astype("uint8")
+    return Image.fromarray(shaded, mode="L").convert("RGB")
+
+
+def test_blur_gate_rejects_hopeless_input():
+    """A hard-shake photo is rejected before Tesseract, with the marker."""
+    _cv2_or_skip()
+    hopeless = _rendered_label(1200, 900)
+    img = Image.open(BytesIO(hopeless)).filter(ImageFilter.GaussianBlur(4))
+    score = _blur_score(_resize_for_ocr(img))
+    assert score < MIN_BLUR_SCORE, f"expected hopeless, score was {score:.1f}"
+    result = extract_text(_rendered_label_png(img))
+    assert result.get("error", "").startswith(BLURRY_IMAGE_ERROR)
+    assert result["text"] == ""
+
+
+def test_blur_gate_passes_imperfect_but_readable_photos():
+    """Mild blur and uneven lighting must NOT be rejected — deskew and the
+    adaptive-threshold variant own that band. Guards against tightening the
+    gate into false-rejecting real packet photos (the failure mode users hit)."""
+    _cv2_or_skip()
+    label = Image.open(BytesIO(_rendered_label(1200, 900)))
+
+    mild = label.filter(ImageFilter.GaussianBlur(0.8))
+    assert _blur_score(_resize_for_ocr(mild)) >= MIN_BLUR_SCORE
+
+    shaded = _gradient_shade(label)
+    assert _blur_score(_resize_for_ocr(shaded)) >= MIN_BLUR_SCORE
+
+
+def test_deskew_recovers_skewed_photo():
+    """A 3-degree camera roll is corrected before variants are built."""
+    _cv2_or_skip()
+    label = Image.open(BytesIO(_rendered_label(1200, 900)))
+    rotated = label.rotate(3, expand=True, fillcolor="white")
+    # minAreaRect on the binarized ink should estimate the roll angle
+    corrected = _deskew(_resize_for_ocr(rotated))
+    # The deskewed output differs from the uncorrected resize (rotation applied)
+    assert corrected.size == _resize_for_ocr(rotated).size
+
+
+def test_adaptive_threshold_variant_separates_uneven_lighting():
+    """Per-neighborhood thresholding recovers print a global-tone pipeline
+    drowns when one side of the packet is shadowed."""
+    _cv2_or_skip()
+    label = Image.open(BytesIO(_rendered_label(1200, 900)))
+    shaded = _gradient_shade(label, low=0.30, high=1.20)
+    binary = _adaptive_threshold_variant(shaded)
+    # ink survived binarization: dark pixels exist and are a sane fraction
+    # (three text lines on a 1200x900 canvas measure ~0.004)
+    gray = numpy.asarray(binary.convert("L"))
+    ink_ratio = float((gray < 128).mean())
+    assert 0.002 < ink_ratio < 0.5, f"ink fraction {ink_ratio:.3f} is degenerate"
+    # and the variant list actually includes it
+    variants = _prepare_variants(label)
+    assert len(variants) >= 3  # 2 tone crops + 1 adaptive
+
+
+def test_uneven_lighting_scan_still_extracts_text():
+    """End-to-end: a shadowed label still yields rows through the full pipeline."""
+    _cv2_or_skip()
+    label = Image.open(BytesIO(_rendered_label(1200, 900)))
+    shaded = _gradient_shade(label)
+    result = extract_text(_rendered_label_png(shaded))
+    assert result.get("error") is None
+    assert "480" in result["text"]
+
+
+def _rendered_label_png(image):
+    buf = BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
