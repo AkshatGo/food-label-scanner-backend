@@ -31,12 +31,12 @@ _ALTERNATION = "|".join(
 )
 
 _ROW_RE = re.compile(
-    # Tesseract commonly prefixes a row with junk (a bullet, a stray quote:
-    # "'Sugars less than 1g"), so allow a short run of non-alphanumeric
-    # characters before the label. Without this, a real nutrition row is
-    # dropped entirely and the field is then "scored as zero" for review.
-    r"^[\W_]{0,4}(" + _ALTERNATION + r")\s*(?:\([^)]{0,40}\))?\s*[:=\-]?\s*"
-    r"(?:approx\.?\s*)?(?:less\s+than\s+)?(\d+(?:\.\d+)?)\s*(kcal|kj|mcg|ug|mg|g|iu)?",
+    r"^[\W_]{0,4}(" + _ALTERNATION + r")\s*"
+    r"(?:\(\s*(?P<header_unit>kcal|kj|mcg|ug|mg|g)\s*\)|\([^)]{0,40}\))?\s*[:=\-|]?\s*"
+    r"(?:(?P<prefix_unit>kcal|kj|mcg|ug|mg|g)\s+)?"
+    r"(?:approx\.?\s*)?(?P<bound>less\s+than\s+|<\s*)?"
+    r"(?P<number>\d+(?:[.,]\d+)?)(?![\d.,])\s*"
+    r"(?P<unit>kcal|kj|mcg|ug|mg|g|iu)?(?![A-Za-z])",
     re.IGNORECASE,
 )
 
@@ -129,9 +129,17 @@ def _extract_rows(text):
         canonical = _FIELD_LOOKUP.get(label)
         if canonical is None:
             continue
-        value_str, ambiguous = _coerce_ocr_number(match.group(2), line)
+        value_str, ambiguous = _coerce_ocr_number(match.group("number"), line)
+        uncertain = bool(
+            (match.group("bound") or "").strip() == "<"
+            or line[match.end():].lstrip().startswith("%")
+        )
+        if "," in value_str:
+            uncertain |= len(value_str.split(",")[1]) == 3
+            value_str = value_str.replace(",", ".")
         value = float(value_str)
-        unit = (match.group(3) or "").lower()
+        unit = (match.group("unit") or match.group("header_unit")
+                or match.group("prefix_unit") or "").lower()
         has_unit = bool(unit)
 
         pct = None
@@ -149,6 +157,7 @@ def _extract_rows(text):
             "has_unit": has_unit,
             "ambiguous": ambiguous,
             "pct": pct,
+            "uncertain": uncertain,
         }
 
     ambiguous_fields = []
@@ -215,13 +224,20 @@ def _extract_rows(text):
     for canonical, entry in best.items():
         value = entry["value"]
         unit = entry["unit"]
+        if entry["uncertain"] and canonical not in ambiguous_fields:
+            ambiguous_fields.append(canonical)
         # Unit normalization
         if canonical == "energy_kcal" and unit == "kj":
             value /= 4.184
             unit = "kcal"
-        elif canonical != "energy_kcal" and unit == "kj":
-            value /= 1000.0
-            unit = "g"
+        elif (canonical == "energy_kcal" and unit not in ("", "kcal")) or (
+            canonical != "energy_kcal" and unit in ("kj", "kcal", "iu")
+        ):
+            ambiguous_fields.append(canonical)
+            continue
+        elif unit in ("mcg", "ug"):
+            value /= 1_000_000 if canonical in _GRAM_FIELDS else 1000
+            unit = _DEFAULT_UNITS[canonical]
         elif unit == "mg" and canonical in _GRAM_FIELDS:
             value /= 1000.0
             unit = "g"
@@ -305,15 +321,18 @@ def extract_nutrition(text):
 
     # A digit that may be a substituted "g" must never silently reach the
     # scoring engine, even when the basis itself was confidently detected.
-    needs_review = (basis_info["basis"] == "unknown" and bool(values)) or bool(ambiguous_fields)
+    multiple_bases = bool(_PER100_RE.search(text) and re.search(r"per\s+serving\b", text, re.I))
+    needs_review = ((basis_info["basis"] == "unknown" and bool(values))
+                    or bool(ambiguous_fields) or multiple_bases)
 
     note = "Values read on a per-100g/100ml basis."
     if ambiguous_fields:
         note = (
-            "Some values were read without a unit and may contain an OCR "
-            "substitution (a trailing 'g' misread as '9'); flagged for user "
-            "review before trusting a health formula."
+            "Some nutrition values contain ambiguous OCR numbers, units, "
+            "percentages or bounds; verify them against the label before scoring."
         )
+    elif multiple_bases:
+        note = "Both per-serving and per-100 values appear; verify the nutrition column before scoring."
     elif dv_resolved_fields:
         note = (
             "Value(s) " + ", ".join(sorted(dv_resolved_fields)) + " were read "

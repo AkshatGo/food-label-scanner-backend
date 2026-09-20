@@ -39,7 +39,7 @@ def clean_text(raw_text: str) -> str:
     text = text.replace("–", "-").replace("—", "-")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"[ \t]+([,.;:!?])", r"\1", text)
     return "\n".join(line.strip() for line in text.splitlines() if line.strip()).strip()
 
 
@@ -51,6 +51,7 @@ def _nutrition_table(text: str) -> bool:
 def _insert_row_breaks(text: str) -> str:
     labels = "|".join(sorted((re.escape(label) for label in NUTRIENT_LABELS), key=len, reverse=True))
     text = re.sub(rf"(?i)(?<=\d)\s+(?=({labels})\b)", "\n", text)
+    text = re.sub(rf"(?i)(\d\s*(?:kcal|kj|mg|g))\s+(?=({labels})\b)", r"\1\n", text)
     text = re.sub(rf"(?i)(%\s*)(?=({labels})\b)", r"\1\n", text)
     return text
 

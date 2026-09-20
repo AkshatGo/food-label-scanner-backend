@@ -162,6 +162,48 @@ def test_scan_unknown_id_404(client, auth_headers):
     assert client.get("/api/v1/scan/SCAN-NOPE", headers=auth_headers).status_code == 404
 
 
+@pytest.mark.parametrize("back_confidence,back_text", [(35, "Protein 6 g"), (None, "")])
+def test_unreadable_back_is_not_hidden_by_clear_front(monkeypatch, back_confidence, back_text):
+    from app.api import routes
+    from app.database import store
+    from app.models.scan_model import create_scan_document
+
+    readings = iter([
+        {"text": "Test Biscuits Nutritional Information per 100g\nEnergy 480 kcal\nProtein 6 g", "confidence": 99},
+        {"text": back_text, "confidence": back_confidence},
+    ])
+    monkeypatch.setattr(routes, "run_ocr_with_retries", lambda _: next(readings))
+    scan_id = f"SCAN-QUALITY-{time.time_ns()}"
+    image_refs = {name: store.fs.put(_png_bytes(), filename=f"{name}.png") for name in ("front", "back")}
+    store.scans.insert_one(create_scan_document(scan_id, "quality-test", image_refs))
+    routes._process_scan(scan_id)
+    scan = store.scans.find_one({"scan_id": scan_id})
+    assert scan["status"] == "done"
+    assert scan["needs_review"] is True
+    assert any("back photo" in reason for reason in scan["review_reasons"])
+
+
+def test_failed_scan_is_terminal_and_reports_processing_error(client, auth_headers):
+    from app.database import store
+
+    user_id = client.get("/api/v1/auth/me", headers=auth_headers).json()["user_id"]
+    scan_id = f"SCAN-FAILED-{time.time_ns()}"
+    store.scans.insert_one({
+        "scan_id": scan_id,
+        "user_id": user_id,
+        "status": "failed",
+        "error": "internal details must not be returned",
+    })
+
+    response = client.get(f"/api/v1/scan/{scan_id}", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["error"]["code"] == "PROCESSING_FAILED"
+    assert "try again" in body["error"]["message"].lower()
+    assert "internal details" not in response.text
+
+
 # --- Product, compare, personalize ---------------------------------------------------
 
 @pytest.fixture()

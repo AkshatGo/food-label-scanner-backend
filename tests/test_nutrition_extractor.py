@@ -3,6 +3,28 @@ flagged pitfall and is tested explicitly)."""
 
 from app.services.nutrition_extractor import extract_nutrition, to_inr_input
 from app.services.scan_pipeline import run_scan_pipeline
+import pytest
+
+
+@pytest.mark.parametrize("row,expected", [("Protein (g) 6,5", 6.5), ("Protein g 6.5", 6.5), ("Protein 6500 mg", 6.5)])
+def test_mobile_table_units_and_decimal_marks(row, expected):
+    result = extract_nutrition("Per 100g\n" + row)
+    assert result["values"]["protein_g"]["value"] == expected
+
+
+@pytest.mark.parametrize("row", ["Protein < 1 g", "Protein 1,000 g", "Protein 10%", "Protein 20 kcal"])
+def test_uncertain_numeric_readings_require_review(row):
+    assert extract_nutrition("Per 100g\n" + row)["needs_review"] is True
+
+
+def test_mixed_serving_columns_require_review():
+    result = extract_nutrition("Per serving (30g) | Per 100g\nProtein 1.8 g 6 g")
+    assert result["needs_review"] is True
+
+
+def test_micrograms_are_converted_to_milligrams():
+    result = extract_nutrition("Per 100g\nSodium 1000 mcg")
+    assert result["values"]["sodium_mg"] == {"value": 1, "unit": "mg"}
 
 
 def test_per100_values_extracted_directly():

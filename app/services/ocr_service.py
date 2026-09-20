@@ -15,6 +15,7 @@ The engine is swappable without touching the pipeline.
 
 import os
 from io import BytesIO
+from time import monotonic
 
 # Tesseract is OpenMP-parallel: on a small deployment (0.1-0.5 CPU cgroup) it
 # spawns one thread per *host* core, all fighting for a fractional CPU quota
@@ -48,6 +49,7 @@ BLURRY_IMAGE_ERROR = "BLURRY_IMAGE"
 # off a photo of a hand/blurry background). Such input must fail with
 # guidance, never become a stored zero-scored product.
 UNREADABLE_IMAGE_ERROR = "UNREADABLE_IMAGE"
+PANEL_UNREADABLE_ERROR = "PANEL_UNREADABLE"
 
 # OCR budget tuning: the pipeline downscales sources to this pixel budget and
 # no longer enlarges them. The previous budget (1.5MP, then enlarged 2x on
@@ -56,6 +58,8 @@ UNREADABLE_IMAGE_ERROR = "UNREADABLE_IMAGE"
 # process timeout" even for crisp photos. Accuracy on 900k-pixel grayscale
 # input remains sufficient for printed labels; see tests/test_scan_pipeline.py.
 MAX_OCR_SOURCE_PIXELS = 900_000
+OCR_TIME_BUDGET = 120
+OCR_PASS_TIMEOUT = 60
 ENLARGE_LINEAR_CAP = 4  # safety bound for absurd thumbnails (e.g. 50x50)
 ENLARGE_FACTOR = 1
 
@@ -167,7 +171,7 @@ def _adaptive_threshold_variant(pil_image):
 
 
 def _prepare_variants(image):
-    """Create readable label crops without changing the source image."""
+    """Build tone and adaptive variants within the deployment's pixel budget."""
     image = _resize_for_ocr(image)
     if cv2 is not None:
         image = _deskew(image)
@@ -194,12 +198,12 @@ def _prepare_variants(image):
     return variants
 
 
-def _read_variant(pytesseract, image, mode):
+def _read_variant(pytesseract, image, mode, timeout=OCR_PASS_TIMEOUT):
     data = pytesseract.image_to_data(
         image,
         config=f"--oem 3 --psm {mode}",
         output_type=pytesseract.Output.DICT,
-        timeout=60,
+        timeout=timeout,
     )
     lines = {}
     confidences = []
@@ -224,30 +228,35 @@ def _read_variant(pytesseract, image, mode):
 
 
 def _merge_candidates(candidates):
-    unique_lines = []
-    seen = set()
-    for candidate in sorted(candidates, key=lambda item: item["confidence"] or 0, reverse=True):
-        for line in candidate["text"].splitlines():
-            normalized = " ".join(line.lower().split())
-            if normalized and normalized not in seen:
-                seen.add(normalized)
-                unique_lines.append(line.strip())
-    confidence_values = [item["confidence"] for item in candidates if item["confidence"] is not None]
+    # Mixing passes can put one pass's serving header over another pass's
+    # values. Keep a coherent reading, preferring readable nutrition rows.
+    best = max(candidates, key=_candidate_score)
     return {
-        "text": "\n".join(unique_lines),
-        "confidence": round(sum(confidence_values) / len(confidence_values), 2) if confidence_values else None,
+        "text": best["text"],
+        "confidence": best["confidence"],
         "variants_used": len(candidates),
     }
 
 
+def _candidate_score(candidate):
+    from .nlp_cleanup import nlp_reconstruct
+    from .nutrition_extractor import extract_nutrition
+
+    text = nlp_reconstruct(candidate["text"])["human_readable_text"]
+    fields = len(extract_nutrition(text)["values"])
+    confidence = candidate["confidence"] or 0
+    return confidence + min(fields, 8) * 5 + min(candidate["word_count"], 40) * 0.2
+
+
 def extract_text(image_bytes: bytes) -> dict:
-    """Extract reconstructed label text from full-frame and focused crops."""
+    """Read mobile photos with bounded retries for contrast and orientation."""
     try:
         import pytesseract
     except ImportError as error:
         raise RuntimeError("OCR is unavailable; install the backend requirements") from error
 
-    image = ImageOps.exif_transpose(Image.open(BytesIO(image_bytes))).convert("RGB")
+    with Image.open(BytesIO(image_bytes)) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
     if cv2 is not None:
         score = _blur_score(_resize_for_ocr(image))
         if score < MIN_BLUR_SCORE:
@@ -258,8 +267,29 @@ def extract_text(image_bytes: bytes) -> dict:
                 "error": f"{BLURRY_IMAGE_ERROR}: variance-of-Laplacian {score:.1f} is below {MIN_BLUR_SCORE:g}",
             }
     candidates = []
-    for variant in _prepare_variants(image):
-        result = _read_variant(pytesseract, variant, 6)
+    deadline = monotonic() + OCR_TIME_BUDGET
+    last_timeout = None
+
+    def attempts():
+        for variant in _prepare_variants(image):
+            yield variant, 6
+        # Rotations also cover mobile clients that strip EXIF orientation.
+        gray = ImageOps.grayscale(_resize_for_ocr(image))
+        for angle in (90, 270, 180):
+            yield gray.rotate(angle, expand=True), 6
+        yield gray, 11  # scattered front-of-pack text
+
+    for variant, mode in attempts():
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            break
+        try:
+            result = _read_variant(pytesseract, variant, mode, timeout=min(OCR_PASS_TIMEOUT, remaining))
+        except RuntimeError as error:
+            if "timeout" not in str(error).lower():
+                raise
+            last_timeout = error
+            continue
         if result["word_count"] >= 2:
             candidates.append(result)
             if (
@@ -270,6 +300,8 @@ def extract_text(image_bytes: bytes) -> dict:
                 break
 
     if not candidates:
+        if last_timeout is not None:
+            raise last_timeout
         return {"text": "", "confidence": None, "variants_used": 0}
     return _merge_candidates(candidates)
 

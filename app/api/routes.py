@@ -320,6 +320,7 @@ def _process_scan(scan_id):
                 "raw_text": raw["text"],
                 "cleaned_text": reconstruction["cleaned_text"],
                 "confidence": raw["confidence"],
+                "variants_used": raw.get("variants_used", 1),
             }
             if raw["confidence"] is not None:
                 confidences.append(raw["confidence"])
@@ -369,6 +370,19 @@ def _process_scan(scan_id):
 
         needs_review = False
         review_reasons = []
+        for name, reading in per_image.items():
+            if not reading["cleaned_text"].strip() or reading["confidence"] is None:
+                needs_review = True
+                review_reasons.append(
+                    f"The {name} photo could not be read reliably. Retake it with the label "
+                    "filling the frame, in focus and without glare."
+                )
+            elif reading["confidence"] < config.LOW_OCR_CONFIDENCE_THRESHOLD:
+                needs_review = True
+                review_reasons.append(
+                    f"The {name} photo has low text confidence. Verify its values or retake "
+                    "the photo in even lighting with the camera parallel to the label."
+                )
         if confidence_avg is not None and confidence_avg < config.LOW_OCR_CONFIDENCE_THRESHOLD:
             needs_review = True
             review_reasons.append(

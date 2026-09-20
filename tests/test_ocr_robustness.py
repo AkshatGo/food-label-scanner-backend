@@ -258,7 +258,7 @@ def test_early_exit_skips_fallback_variants(monkeypatch):
 
     calls = {"n": 0}
 
-    def strong_read(_pytesseract, _image, _mode):
+    def strong_read(_pytesseract, _image, _mode, **kwargs):
         calls["n"] += 1
         return {"text": "Energy 480 kcal Protein 6 g Total Sugars 18 g",
                 "confidence": 91.0, "word_count": 10}
@@ -275,7 +275,7 @@ def test_weak_first_read_still_runs_fallback_variants(monkeypatch):
 
     calls = {"n": 0}
 
-    def weak_then_better(_pytesseract, _image, _mode):
+    def weak_then_better(_pytesseract, _image, _mode, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             return {"text": "Energy 480", "confidence": 40.0, "word_count": 2}
