@@ -2,16 +2,26 @@
 
 OCR corrects EXIF orientation and retains the deployment's 900,000-pixel
 budget, enlarging small inputs by at most 4x. OpenCV handles blur detection,
-deskewing and adaptive thresholding for uneven lighting. Ruled nutrition
-tables printed as white lettering on saturated backgrounds (orange/red/green
-packaging) are detected and re-assembled cell-by-cell into a black-on-white
-canvas before OCR (app/services/table_image.py); row and column order are
-preserved and no values are invented. Difficult inputs get
-quarter-turn rotation and sparse-text retries, within a 120-second OCR budget
-per image (at most 60 seconds per Tesseract call, plus preparation overhead).
-These limits retain the upstream fixes for hosts with limited CPU; confident
-readings — including a read with six or more clean nutrition fields — exit
-early. Images are processed locally; no cloud service is required.
+deskewing, adaptive thresholding and flat-field correction for uneven or
+gradient lighting. Ruled nutrition tables printed as white lettering on
+saturated backgrounds (orange/red/green packaging) are detected and
+re-assembled cell-by-cell — as per-row strips (cheap calls that survive
+throttled hosts) and a full canvas — before OCR
+(app/services/table_image.py); row and column order are preserved and no
+values are invented. Difficult inputs get quarter-turn rotation and
+sparse-text retries, within a 120-second OCR budget per image (at most 60
+seconds per Tesseract call, plus preparation overhead). Confident readings
+exit early, with two accuracy guards: a half-read panel (heading present,
+fewer than six core fields) keeps the rescue variants running, and the
+final reading is chosen with core panel rows weighted above raw OCR
+confidence so a complete-but-noisier read beats a cleaner truncated one.
+Images are processed locally; no cloud service is required.
+
+Accuracy was swept across packaging print styles (plain paper, kraft
+texture, white-on-red, dark gradient; pristine and JPEG-degraded): all 48
+ground-truth fields recovered. The sweep lives in this repo's history as
+tests/test_ocr_service.py regressions; real-phone photos of new packaging
+styles remain the best way to extend coverage.
 
 The result uses one complete OCR candidate, ranked by confidence and readable
 nutrition fields. Combining different readings can mix serving headers and

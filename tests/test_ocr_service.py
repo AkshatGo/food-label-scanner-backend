@@ -42,7 +42,10 @@ def test_timeout_retries_without_losing_successful_read(monkeypatch):
         calls.append(kwargs["timeout"])
         if len(calls) == 1:
             raise RuntimeError("Tesseract process timeout")
-        return {"text": "Nutrition per 100g Protein 6 g Energy 400 kcal", "confidence": 95, "word_count": 10}
+        # A genuinely strong read of a NON-panel image (no nutrition heading,
+        # no core fields) — a strong read like this exits the pass loop.
+        return {"text": "Front of pack Brand X Net weight 100g", "confidence": 95,
+                "word_count": 10}
 
     monkeypatch.setattr(ocr_service, "_read_variant", read)
     result = ocr_service.extract_text(_bytes(Image.new("RGB", (100, 100))))
@@ -176,3 +179,45 @@ def test_panel_gate_requires_core_fields_not_derivatives():
     assert ocr_service._has_readable_panel(strong) is True
     weak = {"text": five_core_plus_added, "confidence": 80.0, "word_count": 24}
     assert ocr_service._has_readable_panel(weak) is False
+
+
+def test_gradient_shaded_panel_keeps_rescue_variants(monkeypatch):
+    """A strong read that lost bottom rows to shading (heading present, core
+    incomplete) must not early-exit — the adaptive/flat-field variants exist
+    to recover exactly those rows (dark-premium-pack sweep regression)."""
+    from app.services import ocr_service as mod
+
+    calls = {"n": 0}
+
+    def shaded_read(_pytesseract, _image, _mode, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"text": "Nutritional Information per 100g Energy 480 kcal "
+                            "Protein 6 g Total Carbohydrate 62 g Total Sugars 18 g",
+                    "confidence": 92.8, "word_count": 18}
+        return {"text": "Nutritional Information per 100g Energy 480 kcal Protein 6 g "
+                        "Total Carbohydrate 62 g Total Sugars 18 g Total Fat 20 g "
+                        "Sodium 420 mg",
+                "confidence": 91.4, "word_count": 30}
+
+    monkeypatch.setattr(mod, "_read_variant", shaded_read)
+    # Real-print stand-in (the blur gate rejects blank canvases outright).
+    image = Image.new("RGB", (600, 800), "white")
+    ImageDraw.Draw(image).text((30, 30), "Nutritional Information per 100g",
+                               fill="black")
+    result = mod.extract_text(_bytes(image))
+    assert calls["n"] >= 2, "rescue variants never ran"
+    assert "Sodium" in result["text"] and "Total Fat" in result["text"]
+
+
+def test_merge_prefers_complete_panel_over_higher_confidence(monkeypatch):
+    """Raw confidence must not elect a truncated panel: core rows dominate."""
+    truncated = {"text": "Energy 480 kcal Protein 6 g Total Carbohydrate 62 g "
+                         "Total Sugars 18 g",
+                 "confidence": 92.67, "word_count": 18}
+    complete = {"text": "Nutritional Information per 100g Energy 480 kcal Protein 6 g "
+                        "Total Carbohydrate 62 g Total Sugars 18 g Total Fat 20 g "
+                        "Sodium 420 mg",
+                "confidence": 91.40, "word_count": 30}
+    result = ocr_service._merge_candidates([truncated, complete])
+    assert "Sodium 420 mg" in result["text"]

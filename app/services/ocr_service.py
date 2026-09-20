@@ -14,6 +14,7 @@ The engine is swappable without touching the pipeline.
 """
 
 import os
+import re
 from io import BytesIO
 from time import monotonic
 
@@ -197,7 +198,23 @@ def _prepare_variants(image):
         variants.append(ImageEnhance.Contrast(sharpened).enhance(1.8))
     if cv2 is not None:
         variants.append(_adaptive_threshold_variant(image))
+        variants.append(_flat_field_variant(image))
     return variants
+
+
+def _flat_field_variant(pil_image):
+    """Divide out smooth illumination gradients (premium packs, curved packs,
+    shadowed corners): divide by a heavily blurred background estimate so
+    print contrast is restored evenly from top to bottom, then Otsu-binariaze."""
+    gray = cv2.cvtColor(_to_cv(ImageOps.grayscale(pil_image)), cv2.COLOR_BGR2GRAY)
+    background = cv2.morphologyEx(
+        gray, cv2.MORPH_CLOSE,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (61, 61)),
+    )
+    background = cv2.GaussianBlur(background, (0, 0), 25)
+    normalized = cv2.divide(gray, background, scale=255)
+    _, binary = cv2.threshold(normalized, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    return _to_pil(binary)
 
 
 def _read_variant(pytesseract, image, mode, timeout=OCR_PASS_TIMEOUT):
@@ -256,6 +273,20 @@ _CORE_PANEL_FIELDS = {
 }
 
 
+def _candidate_score(candidate):
+    from .nlp_cleanup import nlp_reconstruct
+    from .nutrition_extractor import extract_nutrition
+
+    text = nlp_reconstruct(candidate["text"])["human_readable_text"]
+    values = extract_nutrition(text)["values"]
+    # Core panel rows dominate: a complete-but-slightly-noisier read must
+    # beat a cleaner read that silently lost bottom rows to shading —
+    # raw confidence cannot be allowed to choose a truncated panel.
+    core = len(_CORE_PANEL_FIELDS & set(values))
+    confidence = candidate["confidence"] or 0
+    return core * 20 + confidence + min(len(values), 8) * 5 + min(candidate["word_count"], 40) * 0.2
+
+
 def _has_readable_panel(candidate):
     from .nlp_cleanup import nlp_reconstruct
     from .nutrition_extractor import extract_nutrition
@@ -266,6 +297,30 @@ def _has_readable_panel(candidate):
     # that premature exit is exactly how rows get dropped.
     return (len(_CORE_PANEL_FIELDS & set(nutrition["values"])) >= 6
             and not nutrition["needs_review"])
+
+
+_PANEL_HEADING_RE = re.compile(
+    r"nutritional\s+(?:information|facts)|nutrition\s+(?:information|facts)"
+    r"|per\s+100\s*(?:g|ml)\b", re.IGNORECASE)
+
+
+def _panel_incomplete(candidate):
+    """True when a panel heading is present but core rows are still missing."""
+    from .nlp_cleanup import nlp_reconstruct
+    from .nutrition_extractor import extract_nutrition
+
+    if not _PANEL_HEADING_RE.search(candidate["text"]):
+        return False
+    nutrition = extract_nutrition(nlp_reconstruct(candidate["text"])["human_readable_text"])
+    return len(_CORE_PANEL_FIELDS & set(nutrition["values"])) < 6
+
+
+def _core_field_count(candidate):
+    from .nlp_cleanup import nlp_reconstruct
+    from .nutrition_extractor import extract_nutrition
+
+    nutrition = extract_nutrition(nlp_reconstruct(candidate["text"])["human_readable_text"])
+    return len(_CORE_PANEL_FIELDS & set(nutrition["values"]))
 
 
 def extract_text(image_bytes: bytes) -> dict:
@@ -341,11 +396,24 @@ def extract_text(image_bytes: bytes) -> dict:
             continue
         if result["word_count"] >= 2:
             candidates.append(result)
-            if (
+            if _has_readable_panel(result):
+                # Panel complete: skip the remaining fallback passes.
+                break
+            # A panel heading seen on ANY candidate with core rows still
+            # missing keeps the rescue variants (adaptive threshold and
+            # flat-field handle gradient lighting that silences bottom
+            # rows) running — accuracy beats latency for a degraded panel.
+            # The heading often gets cropped away while rows survive, so
+            # evidence is tracked across all candidates, not this one.
+            heading_seen = any(
+                _PANEL_HEADING_RE.search(candidate["text"])
+                for candidate in candidates
+            )
+            strong = (
                 result["word_count"] >= EARLY_EXIT_WORDS
                 and (result["confidence"] or 0) >= EARLY_EXIT_CONFIDENCE
-            ) or _has_readable_panel(result):
-                # Strong first read: skip the remaining fallback passes.
+            )
+            if strong and not (heading_seen and _core_field_count(result) < 6):
                 break
 
     if strip_parts and not strip_candidate_added:
