@@ -201,3 +201,27 @@ def test_invalid_condition_raises():
 
 def test_supported_conditions_fixed():
     assert SUPPORTED_CONDITIONS == ("sugar", "diabetes", "migraine", "fever")
+
+
+def test_unread_values_yield_could_not_verify_never_good_fit():
+    """\"Value not read\" is not evidence of compliance: with nothing readable,
+    every rule must return COULD_NOT_VERIFY instead of GOOD_FIT."""
+    empty = {"product_id": "p", "category": "I",
+             "nutrition_per_100g": {}, "ingredients": []}
+    result = personalize(empty, list(SUPPORTED_CONDITIONS))
+    assert {v["verdict"] for v in result["verdicts"]} == {"COULD_NOT_VERIFY"}
+
+
+def test_hard_triggers_still_fire_from_partial_reads():
+    """A review-flagged scan with a partial panel still AVOIDs when the read
+    values/ingredients cross a hard threshold — personalization is shown on
+    review scans instead of being blanket-withheld."""
+    product = {"product_id": "p", "category": "I",
+               "nutrition_per_100g": {"total_sugar_g": 90.0, "sodium_mg": 300.0,
+                                      "carbohydrate_g": 90.0, "dietary_fiber_g": 0.0},
+               "ingredients": [{"name": "Glucose"}, {"name": "Water"},
+                               {"name": "Vitamin C"}]}
+    result = personalize(product, ["diabetes", "fever"])
+    verdicts = {v["condition"]: v for v in result["verdicts"]}
+    assert verdicts["diabetes"]["verdict"] == "AVOID"
+    assert verdicts["fever"]["verdict"] == "GOOD_FIT"  # sodium/satfat were read

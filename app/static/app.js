@@ -624,9 +624,9 @@ async function openProduct(id) {
     }
   };
   if (review) {
-    $("#guidanceResult").innerHTML =
-      "<p>The label needs review. Personalized verdicts are withheld because missing values could change the guidance.</p>";
-    return;
+    // Review-flagged scans STILL get personalized rules: hard triggers fire
+    // from whatever was read, and unread inputs render as COULD_NOT_VERIFY
+    // instead of a blanket withheld message.
   }
   if (!state.user?.conditions?.length) {
     $("#guidanceResult").innerHTML =
@@ -643,7 +643,7 @@ async function openProduct(id) {
       result.verdicts
         .map(
           (v) =>
-            `<div class="guidance ${v.verdict === "AVOID" ? "avoid" : v.verdict === "CAUTION" ? "caution" : ""}"><strong>${esc(v.condition)} · ${esc(v.verdict.replaceAll("_", " "))}</strong><ul>${v.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>`,
+            `<div class="guidance ${v.verdict === "AVOID" ? "avoid" : v.verdict === "CAUTION" ? "caution" : v.verdict === "COULD_NOT_VERIFY" ? "unverified" : ""}"><strong>${esc(v.condition)} · ${esc(v.verdict.replaceAll("_", " "))}</strong><ul>${v.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>`,
         )
         .join("") + `<p class="fine-print">${esc(result.disclaimer)}</p>`;
   } catch (error) {

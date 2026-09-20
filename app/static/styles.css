@@ -1161,6 +1161,11 @@ dialog input {
 .guidance.avoid {
   border-left-color: var(--accent);
 }
+/* COULD_NOT_VERIFY: neutral grey — information gap, not a health judgment. */
+.guidance.unverified {
+  border-left-color: #9a9d94;
+  background: rgba(154, 157, 148, 0.07);
+}
 .guidance strong {
   font-size: 12px;
 }

@@ -265,7 +265,8 @@ def test_personalize_with_explicit_conditions(client, auth_headers, scanned_prod
     assert "not a medical device" in body["disclaimer"]
     verdicts = {v["condition"]: v["verdict"] for v in body["verdicts"]}
     assert set(verdicts) == {"diabetes", "migraine"}
-    assert all(v in ("GOOD_FIT", "CAUTION", "AVOID") for v in verdicts.values())
+    assert all(v in ("GOOD_FIT", "CAUTION", "AVOID", "COULD_NOT_VERIFY")
+               for v in verdicts.values())
 
 
 def test_personalize_rejects_invalid_condition(client, auth_headers, scanned_product_id):

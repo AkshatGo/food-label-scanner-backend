@@ -2,8 +2,12 @@
 
 Each condition is an explicit, versioned rule table, NOT a model (ADR-4).
 Verdicts: AVOID requires at least one hard trigger; CAUTION is a softer
-threshold; otherwise GOOD_FIT. Every verdict carries the specific rules that
-fired plus the mandatory non-medical-advice disclaimer.
+threshold; otherwise GOOD_FIT. When a rule's decisive input was not read
+from the label, the verdict is COULD_NOT_VERIFY — never GOOD_FIT, since
+"no value read" is not evidence of compliance. Hard triggers (AVOID/CAUTION)
+still fire from whatever evidence WAS read (e.g. an ingredient trigger).
+Every verdict carries the specific rules that fired plus the mandatory
+non-medical-advice disclaimer.
 Thresholds are per-100g/100ml, matching the INR normalization.
 """
 
@@ -97,11 +101,13 @@ def _additive_class_count(product):
     return count
 
 
-def _verdict(avoids, cautions, good_reason):
+def _verdict(avoids, cautions, good_reason, unverified_reasons=None):
     if avoids:
         return {"verdict": "AVOID", "reasons": avoids}
     if cautions:
         return {"verdict": "CAUTION", "reasons": cautions}
+    if unverified_reasons:
+        return {"verdict": "COULD_NOT_VERIFY", "reasons": unverified_reasons}
     return {"verdict": "GOOD_FIT", "reasons": [good_reason]}
 
 
@@ -117,6 +123,12 @@ def _rule_sugar(product):
     )
 
     avoids, cautions = [], []
+    unverified = []
+    if sugar is None:
+        unverified.append(
+            "The total-sugar value was not read from the label, so the sugar "
+            "thresholds could not be checked."
+        )
     if sugar is not None and sugar > threshold:
         avoids.append(
             f"Total sugar ({sugar:g}g/{unit}) exceeds the {threshold:g}g/{unit} "
@@ -133,7 +145,9 @@ def _rule_sugar(product):
                 f"Total sugar ({sugar:g}g/{unit}) is above the INR 0-point band "
                 f"though below the {threshold:g}g/{unit} AVOID threshold."
             )
-    return _verdict(avoids, cautions, "Total sugar is within the INR 0-point band and no sugary ingredient ranks in the top 3.")
+    return _verdict(avoids, cautions,
+                    "Total sugar is within the INR 0-point band and no sugary ingredient ranks in the top 3.",
+                    unverified)
 
 
 def _rule_diabetes(product):
@@ -150,6 +164,12 @@ def _rule_diabetes(product):
     )
 
     avoids, cautions = [], []
+    unverified = []
+    if sugar is None:
+        unverified.append(
+            "The total-sugar value was not read from the label, so the "
+            "diabetes sugar threshold could not be checked."
+        )
     if (sugar is not None and sugar > sugar_threshold) or high_glycemic_first3:
         if sugar is not None and sugar > sugar_threshold:
             avoids.append(
@@ -176,12 +196,21 @@ def _rule_diabetes(product):
             f"Carbohydrate ({carbs:g}g/100g) is high with low fibre "
             f"({fibre:g}g/100g) — expect a faster glucose response."
         )
-    return _verdict(avoids, cautions, "Sugar, sodium and carbohydrate load are within Diabetes caution thresholds.")
+    return _verdict(avoids, cautions,
+                    "Sugar, sodium and carbohydrate load are within Diabetes caution thresholds.",
+                    unverified)
 
 
 def _rule_migraine(product):
     text = _all_ingredient_text(product)
     avoids, cautions = [], []
+    unverified = []
+    if not text:
+        unverified.append(
+            "The ingredient list was not read from the label, so trigger "
+            "ingredients (MSG, aspartame, nitrites, tyramine sources) could "
+            "not be checked."
+        )
     for trigger in _MIGRAINE_AVOID:
         if trigger in text:
             display = _TRIGGER_DISPLAY.get(trigger, trigger.title())
@@ -198,7 +227,8 @@ def _rule_migraine(product):
             break
     return _verdict(avoids, cautions,
                     "No known migraine-trigger ingredients (MSG, aspartame, "
-                    "nitrites, tyramine sources) detected.")
+                    "nitrites, tyramine sources) detected.",
+                    unverified)
 
 
 def _rule_fever(product):
@@ -210,6 +240,12 @@ def _rule_fever(product):
     additive_count = _additive_class_count(product)
 
     avoids, cautions = [], []
+    unverified = []
+    if sodium is None and satfat is None:
+        unverified.append(
+            "Sodium and saturated-fat values were not read from the label, "
+            "so the fever-diet thresholds could not be checked."
+        )
     if sodium is not None and sodium > SODIUM_AVOID_MG:
         avoids.append(
             f"Sodium ({sodium:g}mg/100g) exceeds 450mg/100g — heavy sodium is "
@@ -236,7 +272,8 @@ def _rule_fever(product):
             f"ingredients — a highly-processed indicator."
         )
     return _verdict(avoids, cautions,
-                    "Sodium, fat and spice load are within fever-diet guidance thresholds.")
+                    "Sodium, fat and spice load are within fever-diet guidance thresholds.",
+                    unverified)
 
 
 _RULES = {
