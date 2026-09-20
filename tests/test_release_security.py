@@ -104,7 +104,13 @@ def test_auth_malformed_types_are_client_errors(payload):
 
 def test_replaying_job_does_not_duplicate_products(monkeypatch):
     from app.api import routes
-    monkeypatch.setattr(routes, 'run_ocr_with_retries', lambda _: {'text': '', 'confidence': None})
+    # Enough real words to clear the legibility gate (routes rejects
+    # near-empty OCR as UNREADABLE_IMAGE before a product is built).
+    monkeypatch.setattr(
+        routes, 'run_ocr_with_retries',
+        lambda _: {'text': 'Crunchy Biscuits Energy 480 kcal Protein 6 g '
+                           'Total Sugars 18 g Total Fat 20 g',
+                   'confidence': 88.0})
     sid = 'replay-' + str(time.time_ns())
     from app.models.scan_model import create_scan_document
     fid = store.fs.put(b'photo')

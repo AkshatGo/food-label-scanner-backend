@@ -35,7 +35,11 @@ from ..services.auth_service import AuthError, login, signup, update_conditions,
 from ..services.compliance import evaluate_compliance
 from ..services.compliance_pdf_service import create_compliance_pdf
 from ..services.nlp_cleanup import nlp_reconstruct
-from ..services.ocr_service import BLURRY_IMAGE_ERROR, run_ocr_with_retries
+from ..services.ocr_service import (
+    BLURRY_IMAGE_ERROR,
+    UNREADABLE_IMAGE_ERROR,
+    run_ocr_with_retries,
+)
 from ..services.personalization import personalize
 from ..services.scan_pipeline import run_scan_pipeline
 
@@ -323,6 +327,19 @@ def _process_scan(scan_id):
         combined_text = "\n".join(ocr_parts).strip()
         confidence_avg = round(sum(confidences) / len(confidences), 2) if confidences else None
 
+        # Legibility gate: OCR succeeded but found too few real words (two
+        # letters minimum, not counting bare digits/symbols). Garbage like
+        # "a \\ ee 50 s" must fail with retake guidance instead of becoming
+        # a stored product whose nutrition is "scored as zero".
+        real_words = re.findall(
+            r"[A-Za-z][A-Za-z\-']*[A-Za-z]|[A-Za-z]{2}", combined_text
+        )
+        if len(real_words) < 5:
+            raise RuntimeError(
+                f"{UNREADABLE_IMAGE_ERROR}: only {len(real_words)} readable "
+                "words found — no nutrition panel or ingredient list visible"
+            )
+
         # --- Extraction -> structured product -> compliance -------------
         product, compliance = run_scan_pipeline(combined_text, confidence_avg)
         # Stable ID makes restarting an interrupted job idempotent.
@@ -421,6 +438,20 @@ def get_scan(scan_id: str, user=Depends(_current_user)):
                         "The photo is too blurry to read reliably. Retake it up "
                         "close and steady — fill the frame with the label, and "
                         "rest the packet on a table if lighting is dim."
+                    ),
+                    "http_status": 422,
+                },
+            }
+        if UNREADABLE_IMAGE_ERROR in stored_error:
+            return {
+                "scan_id": scan_id,
+                "status": "failed",
+                "error": {
+                    "code": "UNREADABLE_IMAGE",
+                    "message": (
+                        "We couldn't find a readable label in these photos. "
+                        "Retake with the nutrition panel or ingredient list "
+                        "filling the frame, in even light."
                     ),
                     "http_status": 422,
                 },

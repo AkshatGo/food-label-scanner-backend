@@ -6,6 +6,7 @@ per-pass timeout, so real-world scans failed with "Tesseract process timeout"
 while the UI blamed photo quality. These tests pin the corrected behavior.
 """
 
+import re
 import time
 from io import BytesIO
 
@@ -19,6 +20,7 @@ from app.services.ocr_service import (
     BLURRY_IMAGE_ERROR,
     MAX_OCR_SOURCE_PIXELS,
     MIN_BLUR_SCORE,
+    UNREADABLE_IMAGE_ERROR,
     _adaptive_threshold_variant,
     _blur_score,
     _deskew,
@@ -206,6 +208,47 @@ def test_uneven_lighting_scan_still_extracts_text():
     result = extract_text(_rendered_label_png(shaded))
     assert result.get("error") is None
     assert "480" in result["text"]
+
+
+def test_garbage_ocr_fails_instead_of_junk_product(client, auth_headers, monkeypatch):
+    """The screenshot regression: OCR returned "a \\ ee 50 s"-class garbage, and
+    the pipeline built a zero-scored product with "values not found" instead of
+    admitting the photo carried no label. Near-empty OCR must fail with guidance."""
+    import app.api.routes as routes_module
+
+    def garbage_text(_bytes):
+        return {"text": "a \\ ee 50 s", "confidence": 41.0, "variants_used": 2}
+
+    monkeypatch.setattr(routes_module, "run_ocr_with_retries", garbage_text)
+    files = {
+        "front_image": ("front.png", _rendered_label(400, 400), "image/png"),
+        "back_image": ("back.png", _rendered_label(400, 400), "image/png"),
+    }
+    response = client.post("/api/v1/scan", files=files, headers=auth_headers)
+    assert response.status_code == 202
+    scan_id = response.json()["scan_id"]
+
+    body = None
+    for _ in range(60):
+        poll = client.get(f"/api/v1/scan/{scan_id}", headers=auth_headers)
+        body = poll.json()
+        if body.get("status") != "processing":
+            break
+    assert body["status"] == "failed"
+    error = body["error"]
+    assert error["code"] == "UNREADABLE_IMAGE"
+    assert "retake" in error["message"].lower()
+    # and no product was persisted for the garbage scan
+    listing = client.get("/api/v1/products", headers=auth_headers)
+    assert listing.json().get("products") == []
+
+
+def test_legibility_gate_passes_real_labels():
+    """Short-but-real label text (well under normal panels) clears the gate."""
+    text = "Crunchy Biscuits Energy 480 kcal Protein 6 g Total Sugars 18 g"
+    words = re.findall(r"[A-Za-z][A-Za-z\-']*[A-Za-z]|[A-Za-z]{2}", text)
+    assert len(words) >= 5
+    assert UNREADABLE_IMAGE_ERROR  # marker wired through ocr_service
 
 
 def _rendered_label_png(image):

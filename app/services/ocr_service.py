@@ -35,6 +35,11 @@ except ImportError:  # pragma: no cover - cv2 ships in requirements
 # handle the degraded-but-readable middle band instead of a rejection.
 MIN_BLUR_SCORE = 15.0
 BLURRY_IMAGE_ERROR = "BLURRY_IMAGE"
+# Marker for the downstream legibility gate (routes): OCR completed but the
+# text carries too few real words to be a label at all (e.g. "a \\ ee 50 s"
+# off a photo of a hand/blurry background). Such input must fail with
+# guidance, never become a stored zero-scored product.
+UNREADABLE_IMAGE_ERROR = "UNREADABLE_IMAGE"
 
 # OCR budget tuning: the pipeline downscales sources to this pixel budget and
 # no longer enlarges them. The previous budget (1.5MP, then enlarged 2x on
