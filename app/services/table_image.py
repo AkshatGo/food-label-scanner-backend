@@ -4,30 +4,39 @@ Indian snack/drink labels frequently print the nutrition table as white
 lettering on a saturated (orange/red/green) background with a ruled grid.
 Full-frame OCR reads the heading and then loses the rows; the parser then
 finds a panel but no values. This module detects the ruled table, removes
-its borders, and re-assembles the cells row-by-row on a clean black-on-white
-canvas that Tesseract reads reliably. Row order and column order are
-preserved so label semantics survive.
+its borders, and re-assembles the content on clean black-on-white canvases
+that Tesseract reads reliably. Row order and column order are preserved so
+label semantics survive.
+
+Two yields are offered: per-row strips (many tiny, cheap OCR calls —
+robust on slow/throttled CPUs where one big canvas call risks the pass
+timeout) and the full mosaic canvas (one call, best when the engine keeps
+row context). Both come from the same detection, so neither can invent
+rows the grid does not contain.
 """
 
 import numpy as np
 from PIL import Image
 
+# Strip canvases get generous margins; Tesseract misreads short text that
+# touches the crop edge.
+_PAD = 24
 
-def table_variants(image, cv2):
-    """Detect ruled tables in either polarity and remove their grid borders.
 
-    Each cell keeps its row and column position. Stretching condensed print
-    horizontally helps Tesseract on packaging fonts; cell-local thresholds
-    preserve white lettering on colored, unevenly lit backgrounds.
+def detect_table_rows(image, cv2):
+    """Return (rows_of_tiles, light_ink) or None.
+
+    Each row is a list of binarized black-ink-on-white tiles in column
+    order. Detection runs once per polarity and keeps the better yield.
     """
     if cv2 is None:
-        return
+        return None
     image = image.copy()
     image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
     gray = np.asarray(image.convert("L"))
     height, width = gray.shape
     if min(height, width) < 200:
-        return
+        return None
     for light_ink in (True, False):
         ink = gray if light_ink else 255 - gray
         mask = cv2.adaptiveThreshold(ink, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -57,7 +66,7 @@ def table_variants(image, cv2):
         rows = [sorted(row) for row in rows if 2 <= len(row) <= 5]
         if len(rows) < 4:
             continue
-        # Bound the assembled canvas independently of source dimensions.
+        # Bound each tile independently of source dimensions.
         scale = min(1.5, 1800 / (max(sum(b[2] for b in row) for row in rows) * 2))
         rendered = []
         for row in rows:
@@ -73,15 +82,56 @@ def table_variants(image, cv2):
                 tile = cv2.threshold(crop, threshold, 255, cv2.THRESH_BINARY_INV)[1]
                 tiles.append(tile)
             rendered.append(tiles)
-        row_heights = [max(tile.shape[0] for tile in row) + 30 for row in rendered]
-        canvas_width = max(sum(tile.shape[1] + 35 for tile in row) for row in rendered) + 20
-        canvas = np.full((sum(row_heights) + 20, canvas_width), 255, np.uint8)
-        top = 20
-        for tiles, row_height in zip(rendered, row_heights):
-            left = 20
-            for tile in tiles:
-                h, w = tile.shape
-                canvas[top:top+h, left:left+w] = tile
-                left += w + 35
-            top += row_height
+        if rendered:
+            return rendered, light_ink
+    return None
+
+
+def _padded(cv2, tile):
+    """Pad a binarized tile with white margin on all sides."""
+    return cv2.copyMakeBorder(tile, _PAD, _PAD, _PAD, _PAD,
+                              cv2.BORDER_CONSTANT, value=255)
+
+
+def row_strips(image, cv2):
+    """Yield one black-on-white canvas per detected table row.
+
+    Small canvases keep every Tesseract call cheap (mode-7 single line per
+    cell is not used because label cells can wrap); slow hosts finish each
+    call even under throttling, and one bad row cannot sink the others.
+    """
+    detected = detect_table_rows(image, cv2)
+    if not detected:
+        return
+    rendered, _light_ink = detected
+    for tiles in rendered:
+        padded = [_padded(cv2, tile) for tile in tiles]
+        height = max(tile.shape[0] for tile in padded)
+        width = sum(tile.shape[1] + 16 for tile in padded) + 8
+        canvas = np.full((height, width), 255, np.uint8)
+        left = 8
+        for tile in padded:
+            h, w = tile.shape
+            canvas[:h, left:left+w] = tile
+            left += w + 16
         yield Image.fromarray(canvas)
+
+
+def table_variants(image, cv2):
+    """Yield the full-table mosaic canvas (row order preserved)."""
+    detected = detect_table_rows(image, cv2)
+    if not detected:
+        return
+    rendered, _light_ink = detected
+    row_heights = [max(tile.shape[0] for tile in row) + 30 for row in rendered]
+    canvas_width = max(sum(tile.shape[1] + 35 for tile in row) for row in rendered) + 20
+    canvas = np.full((sum(row_heights) + 20, canvas_width), 255, np.uint8)
+    top = 20
+    for tiles, row_height in zip(rendered, row_heights):
+        left = 20
+        for tile in tiles:
+            h, w = tile.shape
+            canvas[top:top+h, left:left+w] = tile
+            left += w + 35
+        top += row_height
+    yield Image.fromarray(canvas)

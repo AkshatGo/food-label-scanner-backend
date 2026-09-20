@@ -27,7 +27,7 @@ os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 import numpy
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
-from .table_image import table_variants
+from .table_image import row_strips, table_variants
 
 try:  # optional hardening: headless build keeps Docker slim
     import cv2
@@ -250,14 +250,22 @@ def _candidate_score(candidate):
     return confidence + min(fields, 8) * 5 + min(candidate["word_count"], 40) * 0.2
 
 
+_CORE_PANEL_FIELDS = {
+    "energy_kcal", "protein_g", "carbohydrate_g", "total_sugar_g",
+    "total_fat_g", "saturated_fat_g", "sodium_mg",
+}
+
+
 def _has_readable_panel(candidate):
     from .nlp_cleanup import nlp_reconstruct
     from .nutrition_extractor import extract_nutrition
 
-    if (candidate["confidence"] or 0) < 60:
-        return False
     nutrition = extract_nutrition(nlp_reconstruct(candidate["text"])["human_readable_text"])
-    return len(nutrition["values"]) >= 6 and not nutrition["needs_review"]
+    # Count core FSSAI panel fields only: added_sugar or vitamins must not
+    # satisfy the minimum while a core row (e.g. sodium) is still missing —
+    # that premature exit is exactly how rows get dropped.
+    return (len(_CORE_PANEL_FIELDS & set(nutrition["values"])) >= 6
+            and not nutrition["needs_review"])
 
 
 def extract_text(image_bytes: bytes) -> dict:
@@ -283,19 +291,27 @@ def extract_text(image_bytes: bytes) -> dict:
     last_timeout = None
 
     def attempts():
-        # Ruled nutrition tables (white-on-color print) first: reflowed cells
-        # read far better than the full frame, so try them before tone passes.
+        # Ruled nutrition tables (white-on-color print) first. Row strips:
+        # many small OCR calls, each cheap enough to finish on a throttled
+        # CPU where one big mosaic call risks the pass timeout; joined into
+        # a single coherent candidate so rows keep their order.
+        strips = list(row_strips(image, cv2))
+        for strip in strips:
+            yield strip, 6, True
         for table in table_variants(image, cv2):
-            yield table, 6
+            yield table, 6, False
         for variant in _prepare_variants(image):
-            yield variant, 6
+            yield variant, 6, False
         # Rotations also cover mobile clients that strip EXIF orientation.
         gray = ImageOps.grayscale(_resize_for_ocr(image))
         for angle in (90, 270, 180):
-            yield gray.rotate(angle, expand=True), 6
-        yield gray, 11  # scattered front-of-pack text
+            yield gray.rotate(angle, expand=True), 6, False
+        yield gray, 11, False  # scattered front-of-pack text
 
-    for variant, mode in attempts():
+    strip_parts = []
+    strip_confidences = []
+    strip_candidate_added = False
+    for variant, mode, is_strip in attempts():
         remaining = deadline - monotonic()
         if remaining <= 0:
             break
@@ -306,6 +322,23 @@ def extract_text(image_bytes: bytes) -> dict:
                 raise
             last_timeout = error
             continue
+        if is_strip:
+            if result["word_count"] >= 1:
+                strip_parts.append(result["text"])
+                strip_confidences.append(result["confidence"] or 0)
+                # The joined strips are exactly one coherent table reading —
+                # strong rows can end the whole pass loop early.
+                if len(strip_parts) >= 4 and _has_readable_panel({
+                    "text": "\n".join(strip_parts), "confidence": 80,
+                }):
+                    candidates.append({
+                        "text": "\n".join(strip_parts),
+                        "confidence": round(sum(strip_confidences) / len(strip_confidences), 2),
+                        "word_count": sum(len(t.split()) for t in strip_parts),
+                    })
+                    strip_candidate_added = True
+                    break
+            continue
         if result["word_count"] >= 2:
             candidates.append(result)
             if (
@@ -314,6 +347,15 @@ def extract_text(image_bytes: bytes) -> dict:
             ) or _has_readable_panel(result):
                 # Strong first read: skip the remaining fallback passes.
                 break
+
+    if strip_parts and not strip_candidate_added:
+        # Every strip read but the panel gate never fired (partial table):
+        # the joined strips are still one coherent reading — use them.
+        candidates.append({
+            "text": "\n".join(strip_parts),
+            "confidence": round(sum(strip_confidences) / len(strip_confidences), 2),
+            "word_count": sum(len(t.split()) for t in strip_parts),
+        })
 
     if not candidates:
         if last_timeout is not None:

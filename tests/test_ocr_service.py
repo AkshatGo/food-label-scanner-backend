@@ -163,3 +163,16 @@ def test_table_reflow_detects_ruled_grid():
     assert mosaic.shape[0] < 2000 and mosaic.shape[1] < 2600
     assert (mosaic < 100).mean() > 0.001
     assert (mosaic > 200).mean() > 0.001
+
+
+def test_panel_gate_requires_core_fields_not_derivatives():
+    """added_sugar must not complete the panel while a core row (sodium,
+    energy) is missing — that premature exit is how rows got dropped."""
+    six_core = ("Per 100g Energy 365 kcal Carbohydrate 90 g Total Sugars 90 g "
+                "Protein 0 g Total Fat 0 g Sodium 300 mg")
+    five_core_plus_added = ("Per 100g Energy 365 kcal Carbohydrate 90 g Total Sugars 90 g "
+                            "Added Sugars 90 g Protein 0 g Total Fat 0 g")
+    strong = {"text": six_core, "confidence": 80.0, "word_count": 24}
+    assert ocr_service._has_readable_panel(strong) is True
+    weak = {"text": five_core_plus_added, "confidence": 80.0, "word_count": 24}
+    assert ocr_service._has_readable_panel(weak) is False
