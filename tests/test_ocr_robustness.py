@@ -335,7 +335,7 @@ def test_exempt_product_without_panel_still_completes(client, auth_headers, monk
 
     def exempt_label(_bytes):
         return {
-            "text": "Glucose Biscuit Powder Nutritional Information per 100g "
+            "text": "Honey Nutritional Information per 100g "
                     "Energy 450 kcal Protein 8 g",
             "confidence": 82.0,
             "variants_used": 1,

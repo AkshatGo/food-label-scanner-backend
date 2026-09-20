@@ -322,10 +322,13 @@ def extract_nutrition(text):
     # A digit that may be a substituted "g" must never silently reach the
     # scoring engine, even when the basis itself was confidently detected.
     multiple_bases = bool(_PER100_RE.search(text) and re.search(r"per\s+serving\b", text, re.I))
-    needs_review = ((basis_info["basis"] == "unknown" and bool(values))
+    needs_review = (not values
+                    or (basis_info["basis"] == "unknown" and bool(values))
                     or bool(ambiguous_fields) or multiple_bases)
 
     note = "Values read on a per-100g/100ml basis."
+    if not values:
+        note = "No nutrition values could be read. Retake a close-up of the nutrition table."
     if ambiguous_fields:
         note = (
             "Some nutrition values contain ambiguous OCR numbers, units, "

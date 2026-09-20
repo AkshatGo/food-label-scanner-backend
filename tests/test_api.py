@@ -25,21 +25,34 @@ def auth_headers(client):
     return {"Authorization": f"Bearer {token}"}
 
 
-def _png_bytes(color=(200, 100, 50), size=(600, 800)):
-    """A realistic stand-in for a label photo: solid color plus printed text.
+def _png_bytes(color=(247, 244, 236), size=(600, 800)):
+    """A realistic stand-in for a label photo: light background, dark print.
 
     The OpenCV blur gate correctly rejects pure flat-color uploads (variance
-    of the Laplacian is 0.0 — no edges means no text to read), and the
-    panel gate correctly rejects labels with no nutrition table, so the
-    fixture renders a minimal but complete label.
+    of the Laplacian is 0.0 — no edges means no text to read). White-on-orange
+    print without a table grid is unreadable by any OCR pass, and the panel
+    gate correctly rejects labels with no nutrition table, so the fixture
+    renders dark ink on a paper background — how real panels are printed.
     """
     buffer = io.BytesIO()
-    image = Image.new("RGB", size, color)
-    ImageDraw.Draw(image).text(
-        (30, 30),
-        "Nutritional Information per 100g Energy 450 kcal Protein 8 g",
-        fill="white",
+    # Render at half size then upscale: the built-in bitmap font becomes
+    # ~22px print at the final size, which OCR reads reliably (tiny 11px
+    # print mangles "Energy" into "Eneray" — correctly rejected by the
+    # panel gate, but useless as a happy-path fixture). Rows are drawn on
+    # separate lines because nutrition rows must line-start to parse.
+    lines = (
+        "Nutritional Information per 100g",
+        "Energy 450 kcal",
+        "Protein 8 g",
+        "Total Sugars 20 g",
+        "Total Fat 15 g",
+        "Sodium 320 mg",
     )
+    base = Image.new("RGB", (size[0] // 2, size[1] // 2), color)
+    drawer = ImageDraw.Draw(base)
+    for index, line in enumerate(lines):
+        drawer.text((15, 12 + index * 14), line, fill=(37, 42, 34))
+    image = base.resize(size, Image.Resampling.LANCZOS)
     image.save(buffer, format="PNG")
     return buffer.getvalue()
 

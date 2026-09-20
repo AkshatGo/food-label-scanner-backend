@@ -1,7 +1,8 @@
 """Mobile-photo regressions, including real Tesseract when installed."""
 
-from io import BytesIO
 import shutil
+from io import BytesIO
+from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw, ImageFont
@@ -90,3 +91,75 @@ def test_unit_separated_rows_are_reconstructed():
     text = "Per 100g Energy 480 kcal Protein 6 g Total Sugars 18 g Sodium 420 mg"
     cleaned = nlp_reconstruct(text)["human_readable_text"]
     assert extract_nutrition(cleaned)["values"]["protein_g"]["value"] == 6
+
+
+# --- Real packaging regressions (white print on saturated background) -----------
+# Real photos captured from a Dabur Glucoplus-C carton: the nutrition table is
+# condensed white lettering on orange with a ruled grid. Full-frame OCR reads
+# the heading and loses every row; table reflow must recover them.
+
+REAL_BACK = Path(__file__).parent / "fixtures" / "glucoplus_back_real.png"
+REAL_FRONT = Path(__file__).parent / "fixtures" / "glucoplus_front_real.png"
+
+_EXPECTED_VALUES = {
+    "energy_kcal": 365.0,
+    "carbohydrate_g": 90.0,
+    "total_sugar_g": 90.0,
+    "protein_g": 0.0,
+    "total_fat_g": 0.0,
+    "sodium_mg": 300.0,
+}
+
+
+def _read_label(path):
+    from app.services.ocr_service import extract_text as _extract
+
+    raw = _extract(Path(path).read_bytes())
+    cleaned = nlp_reconstruct(raw["text"])["human_readable_text"]
+    return raw, extract_nutrition(cleaned)
+
+
+@pytest.mark.skipif(not REAL_BACK.exists(), reason="real-photo fixture missing")
+def test_real_colored_table_reads_all_core_values():
+    if not shutil.which("tesseract"):
+        pytest.skip("Tesseract is not installed")
+    _raw, nutrition = _read_label(REAL_BACK)
+    assert nutrition["basis"] == "per_100"
+    for field, expected in _EXPECTED_VALUES.items():
+        entry = nutrition["values"].get(field)
+        assert entry is not None, f"{field} missing from {sorted(nutrition['values'])}"
+        assert entry["value"] == expected, f"{field}: {entry['value']} != {expected}"
+
+
+@pytest.mark.skipif(not REAL_FRONT.exists(), reason="real-photo fixture missing")
+def test_real_front_photo_yields_usable_text():
+    if not shutil.which("tesseract"):
+        pytest.skip("Tesseract is not installed")
+    raw, _nutrition = _read_label(REAL_FRONT)
+    assert (raw["confidence"] or 0) > 40
+    assert "glucoplus" in raw["text"].lower()
+
+
+def test_table_reflow_detects_ruled_grid():
+    """The mosaic canvas is produced for a synthetic ruled table."""
+    import numpy as np
+
+    from app.services.table_image import table_variants
+
+    width, height = 900, 1200
+    image = Image.new("RGB", (width, height), "#e05a2b")
+    draw = ImageDraw.Draw(image)
+    line = 14
+    for row in range(9):
+        y = 100 + row * 100
+        draw.rectangle([140, y, 760, y + line], fill="white")
+        for x in (140, 400, 760 - line):
+            draw.rectangle([x, y, x + line, y + 100], fill="white")
+    variants = list(table_variants(image, __import__("cv2")))
+    assert variants, "ruled table not detected"
+    mosaic = np.asarray(variants[0].convert("L"))
+    # Canvas is assembled (bounded size) with both ink and paper present.
+    # Empty synthetic cells binarize arbitrarily, so only bound the extremes:
+    assert mosaic.shape[0] < 2000 and mosaic.shape[1] < 2600
+    assert (mosaic < 100).mean() > 0.001
+    assert (mosaic > 200).mean() > 0.001

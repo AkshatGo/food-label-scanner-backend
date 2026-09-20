@@ -136,6 +136,16 @@ def build_structured_product(ocr_text, ocr_confidence=None):
     classification = classify_category(text, identity["product_name"] or "")
     category = classification["category"]
 
+    # A per-100g beverage-mix panel describes the dry powder, not the prepared
+    # drink; the rating is honest but the basis must be surfaced to the user.
+    if (category == "II" and nutrition["basis_unit"] == "g"
+            and re.search(r"\b(?:beverage\s+mix|drink\s+mix|powder)\b", text, re.I)):
+        nutrition["needs_review"] = True
+        nutrition["note"] = (
+            "Nutrition is declared per 100 g of dry mix. A prepared-drink rating "
+            "requires its dilution and nutrition basis to be verified."
+        )
+
     # Ingredient curation
     ingredients_match = re.search(
         r"(?:list\s+of\s+)?ingredients?\s*[:\-]?\s*(.*?)(?:\n\s*\n|$)",
@@ -205,6 +215,7 @@ def build_structured_product(ocr_text, ocr_confidence=None):
         "nutrition_per_100g": per100,
         "nutrition_extraction": {
             "basis": nutrition["basis"],
+            "basis_unit": nutrition["basis_unit"],
             "panel_found": nutrition.get("panel_found", bool(nutrition.get("values"))),
             "normalized_to_per_100": nutrition["normalized_to_per_100"],
             "needs_review": nutrition["needs_review"],

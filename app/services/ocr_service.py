@@ -27,6 +27,8 @@ os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 import numpy
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
+from .table_image import table_variants
+
 try:  # optional hardening: headless build keeps Docker slim
     import cv2
 except ImportError:  # pragma: no cover - cv2 ships in requirements
@@ -248,6 +250,16 @@ def _candidate_score(candidate):
     return confidence + min(fields, 8) * 5 + min(candidate["word_count"], 40) * 0.2
 
 
+def _has_readable_panel(candidate):
+    from .nlp_cleanup import nlp_reconstruct
+    from .nutrition_extractor import extract_nutrition
+
+    if (candidate["confidence"] or 0) < 60:
+        return False
+    nutrition = extract_nutrition(nlp_reconstruct(candidate["text"])["human_readable_text"])
+    return len(nutrition["values"]) >= 6 and not nutrition["needs_review"]
+
+
 def extract_text(image_bytes: bytes) -> dict:
     """Read mobile photos with bounded retries for contrast and orientation."""
     try:
@@ -271,6 +283,10 @@ def extract_text(image_bytes: bytes) -> dict:
     last_timeout = None
 
     def attempts():
+        # Ruled nutrition tables (white-on-color print) first: reflowed cells
+        # read far better than the full frame, so try them before tone passes.
+        for table in table_variants(image, cv2):
+            yield table, 6
         for variant in _prepare_variants(image):
             yield variant, 6
         # Rotations also cover mobile clients that strip EXIF orientation.
@@ -295,7 +311,7 @@ def extract_text(image_bytes: bytes) -> dict:
             if (
                 result["word_count"] >= EARLY_EXIT_WORDS
                 and (result["confidence"] or 0) >= EARLY_EXIT_CONFIDENCE
-            ):
+            ) or _has_readable_panel(result):
                 # Strong first read: skip the remaining fallback passes.
                 break
 

@@ -362,10 +362,10 @@ def _process_scan(scan_id):
             for k in ("energy_kcal", "protein_g", "carbohydrate_g", "total_sugar_g",
                       "total_fat_g", "saturated_fat_g", "sodium_mg")
         )
-        if not extraction.get("panel_found") and not any_value and product["category"] != "III":
+        if not any_value and product["category"] != "III":
             raise RuntimeError(
                 f"{PANEL_UNREADABLE_ERROR}: label text was readable but no "
-                "nutrition panel was found or parsed in these photos"
+                "nutrition values were parsed in these photos"
             )
 
         needs_review = False

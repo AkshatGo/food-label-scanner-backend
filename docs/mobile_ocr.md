@@ -2,11 +2,16 @@
 
 OCR corrects EXIF orientation and retains the deployment's 900,000-pixel
 budget, enlarging small inputs by at most 4x. OpenCV handles blur detection,
-deskewing and adaptive thresholding for uneven lighting. Difficult inputs get
+deskewing and adaptive thresholding for uneven lighting. Ruled nutrition
+tables printed as white lettering on saturated backgrounds (orange/red/green
+packaging) are detected and re-assembled cell-by-cell into a black-on-white
+canvas before OCR (app/services/table_image.py); row and column order are
+preserved and no values are invented. Difficult inputs get
 quarter-turn rotation and sparse-text retries, within a 120-second OCR budget
 per image (at most 60 seconds per Tesseract call, plus preparation overhead).
 These limits retain the upstream fixes for hosts with limited CPU; confident
-readings exit early. Images are processed locally; no cloud service is required.
+readings — including a read with six or more clean nutrition fields — exit
+early. Images are processed locally; no cloud service is required.
 
 The result uses one complete OCR candidate, ranked by confidence and readable
 nutrition fields. Combining different readings can mix serving headers and
@@ -28,5 +33,7 @@ JPEG, PNG and WebP remain the supported upload formats.
 Run `pytest tests/test_ocr_service.py tests/test_nutrition_extractor.py` for the
 targeted regressions, or `pytest` for the full suite. Actual OCR tests require
 Tesseract and DejaVu Sans; they skip explicitly when these are unavailable.
-Synthetic rotated labels exercise mechanics; real phone photos are needed to
-measure accuracy on production packaging.
+Synthetic rotated labels exercise mechanics. `tests/fixtures/` contains real
+phone photos of a Dabur Glucoplus-C carton (white-on-orange ruled table) —
+the regression pins all seven core values read from it. Real phone photos
+are still needed to measure accuracy across more production packaging.
