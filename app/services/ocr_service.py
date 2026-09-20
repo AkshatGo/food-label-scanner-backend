@@ -173,6 +173,22 @@ def _adaptive_threshold_variant(pil_image):
     return _to_pil(binary)
 
 
+def _min_channel_variant(pil_image):
+    """Recover WHITE print on a saturated background (red/orange/green packs)
+    WITHOUT a ruled grid — table reflow needs grid lines to detect, this
+    class has none. The per-pixel channel minimum maps saturated hues
+    (high in one channel, low in others) toward dark while white print stays
+    bright; a top-hat transform then extracts bright-on-dark strokes at any
+    background level (an adaptive threshold saturates here: the whole dark
+    background reads as "above local mean"). Returns dark-ink-on-paper."""
+    array = numpy.asarray(pil_image.convert("RGB")).astype(numpy.uint8)
+    ink = array.min(axis=2)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
+    tophat = cv2.morphologyEx(ink, cv2.MORPH_TOPHAT, kernel)
+    _, binary = cv2.threshold(tophat, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    return Image.fromarray(255 - binary, mode="L")  # dark ink on white paper
+
+
 def _prepare_variants(image):
     """Build tone and adaptive variants within the deployment's pixel budget."""
     image = _resize_for_ocr(image)
@@ -199,6 +215,7 @@ def _prepare_variants(image):
     if cv2 is not None:
         variants.append(_adaptive_threshold_variant(image))
         variants.append(_flat_field_variant(image))
+        variants.append(_min_channel_variant(image))
     return variants
 
 

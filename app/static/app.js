@@ -412,15 +412,31 @@ function trustworthy(p) {
 function rating(p) {
   return trustworthy(p)
     ? `${p.inr.rating_stars} / 5`
-    : p.inr?.eligible
-      ? "Review needed"
-      : "Not rated";
+    : typeof p.inr?.rating_stars === "number" && p.inr?.eligible
+      ? `~${p.inr.rating_stars} / 5 (verify)`
+      : p.inr?.eligible
+        ? "Review needed"
+        : "Not rated";
 }
-// Draft INR rating as a 0-10 half-star level, or null when the rating must
-// not be displayed (review needed / not eligible / missing).
+// Draft INR rating as a 0-10 half-star level. Shown whenever a number
+// exists — under review it renders as a clearly provisional meter (amber,
+// "PROVISIONAL" tag) rather than being hidden behind a dash.
 function meterLevel(p) {
-  if (!trustworthy(p) || typeof p.inr.rating_stars !== "number") return null;
+  if (!p.inr?.eligible || typeof p.inr.rating_stars !== "number") return null;
   return Math.max(0, Math.min(10, Math.round(p.inr.rating_stars * 2)));
+}
+function meterIsProvisional(p) {
+  return meterLevel(p) !== null && !trustworthy(p);
+}
+// Display label for the measurement basis. Uses the unit the label itself
+// declared ("per 100g" vs "per 100ml") when it was detected; the beverage
+// category is only a fallback, not evidence — a powder classified in the
+// drink category must not be labeled "per 100ml".
+function panelBasisLabel(p) {
+  const unit = p.nutrition_extraction?.basis_unit;
+  if (unit === "g") return "100g";
+  if (unit === "ml") return "100ml";
+  return p.category === "II" ? "100ml" : "100g";
 }
 const STAR_PATH =
   "M10 1.2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L10 13.6l-4.8 2.5.9-5.4L2.2 6.9l5.4-.8z";
@@ -536,7 +552,7 @@ $("#compareForm").onsubmit = async (event) => {
       });
       const rows = nutrients.filter(([key]) => key in data.product_a);
       $("#compareResult").innerHTML =
-        `<div class="table-scroll"><table><caption>Values per ${a.category === "II" ? "100ml" : "100g"} / ${b.category === "II" ? "100ml" : "100g"}</caption><thead><tr><th scope="col">Measure</th><th scope="col">${esc(a.product_name)}</th><th scope="col">${esc(b.product_name)}</th></tr></thead><tbody><tr><th scope="row">Draft INR rating</th><td>${esc(rating(a))}</td><td>${esc(rating(b))}</td></tr>${rows.map(([key, label, unit]) => `<tr><th scope="row">${label}</th><td>${value(data.product_a[key], unit)}</td><td>${value(data.product_b[key], unit)}</td></tr>`).join("")}</tbody></table></div><p class="comparison-note">${a.category !== b.category ? "These products are in different categories; their ratings and measurement bases are not directly comparable." : "Compare foods in the same category. A single nutrient or rating does not describe an entire diet."}</p>`;
+        `<div class="table-scroll"><table><caption>Values per ${esc(panelBasisLabel(a))} / ${esc(panelBasisLabel(b))}</caption><thead><tr><th scope="col">Measure</th><th scope="col">${esc(a.product_name)}</th><th scope="col">${esc(b.product_name)}</th></tr></thead><tbody><tr><th scope="row">Draft INR rating</th><td>${esc(rating(a))}</td><td>${esc(rating(b))}</td></tr>${rows.map(([key, label, unit]) => `<tr><th scope="row">${label}</th><td>${value(data.product_a[key], unit)}</td><td>${value(data.product_b[key], unit)}</td></tr>`).join("")}</tbody></table></div><p class="comparison-note">${a.category !== b.category ? "These products are in different categories; their ratings and measurement bases are not directly comparable." : "Compare foods in the same category. A single nutrient or rating does not describe an entire diet."}</p>`;
     } catch (error) {
       $("#compareError").textContent = message(error);
     } finally {
@@ -559,8 +575,9 @@ async function openProduct(id) {
     "<p>No ingredients were confidently read. Retake the back photo with the ingredient list filling the frame — a close-up reads far better than the full panel.</p>";
   const counts = p.compliance?.summary?.declarations || {};
   const meter = meterLevel(p);
+  const provisional = meterIsProvisional(p);
   $("#productResult").innerHTML =
-    `<div class="result-heading"><div><span class="eyebrow">YOUR LABEL, DECODED</span><h1>${esc(p.product_name)}</h1><p>${esc(p.brand || "Brand not read")} · ${esc(p.net_quantity || "Pack size not read")}</p></div><div class="result-score"><strong>${trustworthy(p) ? esc(p.inr.rating_stars) : "—"}</strong>${meter !== null ? meterStars(meter, "result-meter") : ""}<small>${trustworthy(p) ? "OUT OF 5 · DRAFT INR" : review ? "VERIFY LABEL" : "NOT RATED"}</small></div></div>${review ? `<div class="review-notice"><strong>Check these readings against the pack.</strong><ul>${(p.review_reasons?.length ? p.review_reasons : ["Incomplete readings: the rating is withheld until values can be verified."]).map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>` : ""}<div class="result-columns"><div><section class="reading-block"><h2>The nutrition panel</h2><p>Per ${p.category === "II" ? "100ml" : "100g"} · ${esc(p.nutrition_extraction?.basis || "Basis not read")}</p><table class="nutrition-table"><tbody>${nutrients.map(([key, label, unit]) => `<tr><td>${label}</td><td>${value(nutrition[key], unit)}</td></tr>`).join("")}</tbody></table></section><section class="reading-block"><h2>Inside the ingredients</h2><div class="ingredient-tags">${ingredients}</div><p>Allergens detected: ${esc((p.allergens?.detected || []).join(", ") || "None detected — this does not establish allergen safety.")}</p></section></div><div><section class="reading-block"><h2>In your context</h2><div id="guidanceResult">Loading your preferences…</div></section><section class="reading-block"><h2>The label checklist</h2><div class="compliance-counts">${Object.entries(
+    `<div class="result-heading"><div><span class="eyebrow">YOUR LABEL, DECODED</span><h1>${esc(p.product_name)}</h1><p>${esc(p.brand || "Brand not read")} · ${esc(p.net_quantity || "Pack size not read")}</p></div><div class="result-score${meter !== null && provisional ? " score-provisional" : ""}"><strong>${p.inr?.eligible && typeof p.inr.rating_stars === "number" ? esc(p.inr.rating_stars) : "—"}</strong>${meter !== null ? meterStars(meter, provisional ? "result-meter meter-provisional" : "result-meter") : ""}<small>${provisional ? `PROVISIONAL · ~${esc(p.inr.rating_stars)}/5 · VERIFY LABEL` : trustworthy(p) ? "OUT OF 5 · DRAFT INR" : "NOT RATED"}</small></div></div>${review ? `<div class="review-notice"><strong>Check these readings against the pack.</strong><ul>${(p.review_reasons?.length ? p.review_reasons : ["Incomplete readings: the rating is withheld until values can be verified."]).map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>` : ""}<div class="result-columns"><div><section class="reading-block"><h2>The nutrition panel</h2><p>Per ${esc(panelBasisLabel(p))} · ${esc(p.nutrition_extraction?.basis || "Basis not read")}</p><table class="nutrition-table"><tbody>${nutrients.map(([key, label, unit]) => `<tr><td>${label}</td><td>${value(nutrition[key], unit)}</td></tr>`).join("")}</tbody></table></section><section class="reading-block"><h2>Inside the ingredients</h2><div class="ingredient-tags">${ingredients}</div><p>Allergens detected: ${esc((p.allergens?.detected || []).join(", ") || "None detected — this does not establish allergen safety.")}</p></section></div><div><section class="reading-block"><h2>In your context</h2><div id="guidanceResult">Loading your preferences…</div></section><section class="reading-block"><h2>The label checklist</h2><div class="compliance-counts">${Object.entries(
       counts,
     )
       .map(

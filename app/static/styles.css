@@ -52,6 +52,18 @@
   width: 22px;
   height: 22px;
 }
+/* Provisional meter: stars render amber while a scan is under review —
+   the rating is shown (never a bare dash) but visibly not certified. */
+.result-score.score-provisional {
+  --accent: #a8681c;
+}
+.result-score .meter-stars.meter-provisional .star svg.fill {
+  fill: #a8681c;
+}
+.result-score .meter-stars.meter-provisional .star svg.bg {
+  fill: none;
+  stroke: #cbb89a;
+}
 .note-number {
   white-space: nowrap;
   flex-shrink: 0;

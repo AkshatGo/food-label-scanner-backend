@@ -264,3 +264,34 @@ def test_front_photo_extracts_product_identity():
         pytest.skip("Tesseract is not installed")
     raw, _nutrition = _read_label(_fixture("glucoplus_front_whatsapp.jpeg"))
     assert "glucoplus" in raw["text"].lower()
+
+
+def test_white_on_color_without_grid_is_rescued():
+    """White print on saturated orange with NO ruled grid: table reflow
+    cannot detect it (no lines), and grayscale tone passes lose the print.
+    The min-channel variant must recover the rows (real-phone failure class)."""
+    import pytesseract
+
+    from app.services.ocr_service import _min_channel_variant
+
+    image = Image.new("RGB", (1000, 700), "#c2480f")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("/usr/share/fonts/TTF/DejaVuSans.ttf", 30)
+    lines = ("Nutritional Information per 100g", "Energy 457 kcal",
+             "Protein 8 g", "Total Sugars 22 g", "Total Fat 18 g",
+             "Sodium 310 mg")
+    for index, line in enumerate(lines):
+        draw.text((50, 40 + index * 90), line, font=font, fill="white")
+    variant = _min_channel_variant(image)
+    text = pytesseract.image_to_string(variant, config="--psm 6")
+    found = sum(1 for probe in ("457", "Protein", "22", "18", "310") if probe in text)
+    assert found >= 4, f"min-channel rescue too weak: {found}/5 probes in {text!r}"
+
+
+def test_min_channel_variant_added_to_rescue_passes():
+    from app.services import ocr_service as mod
+
+    source = Path(mod.__file__).read_text()
+    # Wired into the variant list (def call site plus _prepare_variants).
+    assert source.count("_min_channel_variant(image)") >= 1
+    assert "variants.append(_min_channel_variant(image))" in source
