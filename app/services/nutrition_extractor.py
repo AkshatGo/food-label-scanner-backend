@@ -319,6 +319,22 @@ def extract_nutrition(text):
                 for entry in values.values():
                     entry["value"] = round(entry["value"] * factor, 2)
 
+    # FSSAI-semantic invariants: a printed panel cannot violate these.
+    # total sugars are a subset of total carbohydrates, and saturated fat is
+    # a subset of total fat. A confident-looking violation is OCR digit
+    # corruption (WhatsApp-compressed JPEGs confidently read "385/365" and
+    # "80/90") and must demand verification, never feed a health formula.
+    inconsistent_fields = []
+    if ("total_sugar_g" in values and "carbohydrate_g" in values
+            and values["total_sugar_g"]["value"] > values["carbohydrate_g"]["value"]):
+        inconsistent_fields += ["total_sugar_g", "carbohydrate_g"]
+    if ("saturated_fat_g" in values and "total_fat_g" in values
+            and values["saturated_fat_g"]["value"] > values["total_fat_g"]["value"]):
+        inconsistent_fields += ["saturated_fat_g", "total_fat_g"]
+    for canonical in inconsistent_fields:
+        if canonical not in ambiguous_fields:
+            ambiguous_fields.append(canonical)
+
     # A digit that may be a substituted "g" must never silently reach the
     # scoring engine, even when the basis itself was confidently detected.
     multiple_bases = bool(_PER100_RE.search(text) and re.search(r"per\s+serving\b", text, re.I))
@@ -327,6 +343,14 @@ def extract_nutrition(text):
                     or bool(ambiguous_fields) or multiple_bases)
 
     note = "Values read on a per-100g/100ml basis."
+    if inconsistent_fields:
+        note = (
+            "Read values violate a nutrition invariant (sugars within "
+            "carbohydrates, saturated fat within total fat) — a sign of OCR "
+            "digit corruption. Verify these values against the pack."
+        )
+    elif not values:
+        note = "No nutrition values could be read. Retake a close-up of the nutrition table."
     if not values:
         note = "No nutrition values could be read. Retake a close-up of the nutrition table."
     if ambiguous_fields:
@@ -369,6 +393,7 @@ def extract_nutrition(text):
         "normalization_factor": round(factor, 4),
         "needs_review": needs_review,
         "ocr_ambiguous_fields": ambiguous_fields,
+        "inconsistent_fields": inconsistent_fields,
         "dv_resolved_fields": dv_resolved_fields,
         "subset_resolved_fields": subset_resolved,
         "note": note,

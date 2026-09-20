@@ -221,3 +221,46 @@ def test_merge_prefers_complete_panel_over_higher_confidence(monkeypatch):
                 "confidence": 91.40, "word_count": 30}
     result = ocr_service._merge_candidates([truncated, complete])
     assert "Sodium 420 mg" in result["text"]
+
+
+# --- WhatsApp-compressed JPEG fixtures (degraded real photos) --------------------
+# Same Dabur Glucoplus-C carton, re-photographed and passed through WhatsApp
+# compression: genuinely different captures, not re-encodes of the PNGs.
+
+_TRUTH = {
+    "energy_kcal": 365.0, "carbohydrate_g": 90.0, "total_sugar_g": 90.0,
+    "protein_g": 0.0, "total_fat_g": 0.0, "sodium_mg": 300.0,
+}
+
+
+def _fixture(name):
+    return Path(__file__).parent / "fixtures" / name
+
+
+def test_whatsapp_back_photo_reads_all_core_values():
+    if not shutil.which("tesseract"):
+        pytest.skip("Tesseract is not installed")
+    _raw, nutrition = _read_label(_fixture("glucoplus_back_whatsapp.jpeg"))
+    for field, expected in _TRUTH.items():
+        entry = nutrition["values"].get(field)
+        assert entry is not None, f"{field} missing"
+        assert entry["value"] == expected, f"{field}: {entry['value']} != {expected}"
+
+
+def test_whatsapp_degraded_digits_never_score_silently():
+    """The harsher capture misreads digits confidently (365->385, 90->80).
+    Whatever the pipeline does with it, it must NOT present unflagged values:
+    either the invariant check fires or review is demanded."""
+    if not shutil.which("tesseract"):
+        pytest.skip("Tesseract is not installed")
+    _raw, nutrition = _read_label(_fixture("glucoplus_back_whatsapp_alt.jpeg"))
+    assert nutrition["needs_review"] is True, (
+        "confidently-corrupted digits reached the score unflagged"
+    )
+
+
+def test_front_photo_extracts_product_identity():
+    if not shutil.which("tesseract"):
+        pytest.skip("Tesseract is not installed")
+    raw, _nutrition = _read_label(_fixture("glucoplus_front_whatsapp.jpeg"))
+    assert "glucoplus" in raw["text"].lower()
