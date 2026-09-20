@@ -37,6 +37,7 @@ from ..services.compliance_pdf_service import create_compliance_pdf
 from ..services.nlp_cleanup import nlp_reconstruct
 from ..services.ocr_service import (
     BLURRY_IMAGE_ERROR,
+    PANEL_UNREADABLE_ERROR,
     UNREADABLE_IMAGE_ERROR,
     run_ocr_with_retries,
 )
@@ -346,6 +347,26 @@ def _process_scan(scan_id):
         product_id = "p_" + scan_id
         product["product_id"] = product_id
 
+        # Panel gate: label text was readable (ingredients, serving lines) but
+        # no nutrition-table heading and not a single nutrition row parsed —
+        # the photo framed the wrong side of the packet. Fail with targeted
+        # advice instead of persisting a zero-scored product. Exempt products
+        # (Category-III, e.g. glucose powders per Schedule-IV) carry no panel
+        # by law, so their scans must still complete.
+        extraction = product["nutrition_extraction"]
+        # nutrition_per_100g always carries the keys (None when not extracted).
+        per100 = product["nutrition_per_100g"]
+        any_value = any(
+            per100.get(k) is not None
+            for k in ("energy_kcal", "protein_g", "carbohydrate_g", "total_sugar_g",
+                      "total_fat_g", "saturated_fat_g", "sodium_mg")
+        )
+        if not extraction.get("panel_found") and not any_value and product["category"] != "III":
+            raise RuntimeError(
+                f"{PANEL_UNREADABLE_ERROR}: label text was readable but no "
+                "nutrition panel was found or parsed in these photos"
+            )
+
         needs_review = False
         review_reasons = []
         if confidence_avg is not None and confidence_avg < config.LOW_OCR_CONFIDENCE_THRESHOLD:
@@ -354,9 +375,9 @@ def _process_scan(scan_id):
                 f"Average OCR confidence ({confidence_avg}) is below "
                 f"{config.LOW_OCR_CONFIDENCE_THRESHOLD}. Verify values against the pack."
             )
-        if product["nutrition_extraction"]["needs_review"]:
+        if extraction["needs_review"]:
             needs_review = True
-            review_reasons.append(product["nutrition_extraction"]["note"])
+            review_reasons.append(extraction["note"])
         if product["inr"].get("missing_fields_treated_as_zero"):
             needs_review = True
             review_reasons.append(
@@ -452,6 +473,21 @@ def get_scan(scan_id: str, user=Depends(_current_user)):
                         "We couldn't find a readable label in these photos. "
                         "Retake with the nutrition panel or ingredient list "
                         "filling the frame, in even light."
+                    ),
+                    "http_status": 422,
+                },
+            }
+        if PANEL_UNREADABLE_ERROR in stored_error:
+            return {
+                "scan_id": scan_id,
+                "status": "failed",
+                "error": {
+                    "code": "PANEL_UNREADABLE",
+                    "message": (
+                        "The label text came through, but no nutrition panel "
+                        "was found. Retake with the nutrition information "
+                        "table filling the frame — usually the back or side "
+                        "of the pack."
                     ),
                     "http_status": 422,
                 },

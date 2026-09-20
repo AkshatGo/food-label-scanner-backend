@@ -29,12 +29,17 @@ def _png_bytes(color=(200, 100, 50), size=(600, 800)):
     """A realistic stand-in for a label photo: solid color plus printed text.
 
     The OpenCV blur gate correctly rejects pure flat-color uploads (variance
-    of the Laplacian is 0.0 — no edges means no text to read), so fixtures
-    carry renderable text like a real packet photo would.
+    of the Laplacian is 0.0 — no edges means no text to read), and the
+    panel gate correctly rejects labels with no nutrition table, so the
+    fixture renders a minimal but complete label.
     """
     buffer = io.BytesIO()
     image = Image.new("RGB", size, color)
-    ImageDraw.Draw(image).text((30, 30), "Nutrition Energy 450 kcal", fill="white")
+    ImageDraw.Draw(image).text(
+        (30, 30),
+        "Nutritional Information per 100g Energy 450 kcal Protein 8 g",
+        fill="white",
+    )
     image.save(buffer, format="PNG")
     return buffer.getvalue()
 

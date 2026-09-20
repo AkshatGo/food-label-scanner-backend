@@ -274,6 +274,19 @@ def extract_nutrition(text):
     rows, ambiguous_fields, dv_resolved_fields, subset_resolved = _extract_rows(text)
     basis_info = _detect_basis(text)
 
+    # Panel-visibility signal for the honesty gates: did the OCR text contain
+    # a nutrition-table heading at all? Ingredients-readable-but-panel-absent
+    # means the photo framed the wrong side of the packet — that must fail
+    # with targeted retake advice instead of scoring a zero-nutrition product.
+    panel_found = bool(
+        re.search(
+            r"nutritional\s+information|nutrition\s+(?:facts|information|panel)"
+            r"|nutrition\s+per|per\s+100\s*(?:g|ml)|\bper\s+serving\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
     values = {
         field: {"value": value, "unit": unit}
         for field, value, unit in rows
@@ -326,6 +339,7 @@ def extract_nutrition(text):
 
     return {
         "values": values,
+        "panel_found": panel_found,
         "basis": basis_info["basis"],
         "basis_unit": basis_info["unit"],
         "serving_size": basis_info["serving_size"],

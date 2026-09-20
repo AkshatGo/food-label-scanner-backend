@@ -205,6 +205,7 @@ def build_structured_product(ocr_text, ocr_confidence=None):
         "nutrition_per_100g": per100,
         "nutrition_extraction": {
             "basis": nutrition["basis"],
+            "panel_found": nutrition.get("panel_found", bool(nutrition.get("values"))),
             "normalized_to_per_100": nutrition["normalized_to_per_100"],
             "needs_review": nutrition["needs_review"],
             "ocr_ambiguous_fields": nutrition["ocr_ambiguous_fields"],
