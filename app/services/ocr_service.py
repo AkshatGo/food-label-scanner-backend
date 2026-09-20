@@ -13,7 +13,15 @@ Two toolkits, two jobs (they are not competitors):
 The engine is swappable without touching the pipeline.
 """
 
+import os
 from io import BytesIO
+
+# Tesseract is OpenMP-parallel: on a small deployment (0.1-0.5 CPU cgroup) it
+# spawns one thread per *host* core, all fighting for a fractional CPU quota
+# — wall time balloons 2-5x from context switching. Pinning to one thread is
+# a large, free win on exactly the hosts this app targets. Must be set before
+# the tesseract subprocess spawns; setdefault keeps an explicit env override.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 import numpy
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
@@ -50,6 +58,14 @@ UNREADABLE_IMAGE_ERROR = "UNREADABLE_IMAGE"
 MAX_OCR_SOURCE_PIXELS = 900_000
 ENLARGE_LINEAR_CAP = 4  # safety bound for absurd thumbnails (e.g. 50x50)
 ENLARGE_FACTOR = 1
+
+# Fast-path thresholds: when a read already carries this many words at this
+# confidence, the remaining preprocessing variants are pure latency (each
+# pass costs tens of seconds of small-CPU time). A real nutrition panel at
+# OCR budget reads dozens of words well above this bar; glare-degraded reads
+# fall below it and the fallback passes still fire.
+EARLY_EXIT_WORDS = 8
+EARLY_EXIT_CONFIDENCE = 70.0
 
 
 def _resize_for_ocr(image):
@@ -246,6 +262,12 @@ def extract_text(image_bytes: bytes) -> dict:
         result = _read_variant(pytesseract, variant, 6)
         if result["word_count"] >= 2:
             candidates.append(result)
+            if (
+                result["word_count"] >= EARLY_EXIT_WORDS
+                and (result["confidence"] or 0) >= EARLY_EXIT_CONFIDENCE
+            ):
+                # Strong first read: skip the remaining fallback passes.
+                break
 
     if not candidates:
         return {"text": "", "confidence": None, "variants_used": 0}

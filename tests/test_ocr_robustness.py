@@ -251,6 +251,43 @@ def test_legibility_gate_passes_real_labels():
     assert UNREADABLE_IMAGE_ERROR  # marker wired through ocr_service
 
 
+def test_early_exit_skips_fallback_variants(monkeypatch):
+    """A strong first read (8+ words, 70+ conf) must not pay for the fallback
+    passes — on a small deployment each pass is tens of seconds of latency."""
+    from app.services import ocr_service as mod
+
+    calls = {"n": 0}
+
+    def strong_read(_pytesseract, _image, _mode):
+        calls["n"] += 1
+        return {"text": "Energy 480 kcal Protein 6 g Total Sugars 18 g",
+                "confidence": 91.0, "word_count": 10}
+
+    monkeypatch.setattr(mod, "_read_variant", strong_read)
+    result = mod.extract_text(_rendered_label(600, 600))
+    assert calls["n"] == 1
+    assert result["variants_used"] == 1
+
+
+def test_weak_first_read_still_runs_fallback_variants(monkeypatch):
+    """Degraded first reads keep the multi-variant merge (the accuracy path)."""
+    from app.services import ocr_service as mod
+
+    calls = {"n": 0}
+
+    def weak_then_better(_pytesseract, _image, _mode):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"text": "Energy 480", "confidence": 40.0, "word_count": 2}
+        return {"text": f"pass{calls["n"]} Energy 480 kcal", "confidence": 55.0,
+                "word_count": 4}
+
+    monkeypatch.setattr(mod, "_read_variant", weak_then_better)
+    result = mod.extract_text(_rendered_label(600, 600))
+    assert calls["n"] >= 2  # fallback variants ran
+    assert result["variants_used"] >= 2
+
+
 def _rendered_label_png(image):
     buf = BytesIO()
     image.save(buf, format="PNG")
