@@ -1,0 +1,33 @@
+# Keep-alive for the free Render web service (doc 08).
+#
+# Render's free plan spins the service down after ~15 minutes of inactivity;
+# the next visitor then waits for a cold boot (or gets a 502 from Render's
+# proxy while the app is still starting). Pinging /health every 10 minutes
+# keeps the service warm so real users never hit a cold start.
+#
+# Runs on a public repo, so Actions minutes are free. The cron fires a few
+# times per hour; GitHub may delay scheduled jobs by a few minutes under
+# load, which is fine — only sustained silence lets the service spin down.
+
+name: Keep-alive ping
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # every 10 minutes
+  workflow_dispatch: {} # manual trigger from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 \
+            https://labelens-lbzo.onrender.com/health)
+          echo "GET /health -> HTTP $code"
+          # 200 = healthy, 503 = app up but storage down (still counts as
+          # traffic and keeps the service warm), anything else is a failure
+          # so the workflow run surfaces the problem in the Actions tab.
+          if [ "$code" != "200" ] && [ "$code" != "503" ]; then
+            exit 1
+          fi
