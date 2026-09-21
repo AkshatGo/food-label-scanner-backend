@@ -334,8 +334,14 @@ def extract_nutrition(text):
     # A digit that may be a substituted "g" must never silently reach the
     # scoring engine, even when the basis itself was confidently detected.
     multiple_bases = bool(_PER100_RE.search(text) and re.search(r"per\s+serving\b", text, re.I))
+    implausible_fields = []
+    plausibility_limits = {"energy_kcal": 10000, "sodium_mg": 100000}
+    for field, limit in plausibility_limits.items():
+        if values.get(field) and values[field]["value"] > limit:
+            implausible_fields.append(field)
     needs_review = (not values or (basis_info["basis"] == "unknown" and bool(values))
                     or bool(ambiguous_fields) or multiple_bases)
+    needs_review |= bool(implausible_fields)
 
     note = "Values read on a per-100g/100ml basis."
     if not values:
@@ -380,6 +386,7 @@ def extract_nutrition(text):
         "normalization_factor": round(factor, 4),
         "needs_review": needs_review,
         "ocr_ambiguous_fields": ambiguous_fields,
+        "implausible_fields": implausible_fields,
         "dv_resolved_fields": dv_resolved_fields,
         "subset_resolved_fields": subset_resolved,
         "note": note,
