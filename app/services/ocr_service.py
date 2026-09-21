@@ -314,6 +314,12 @@ def extract_text(image_bytes: bytes) -> dict:
         remaining = deadline - monotonic()
         if remaining <= 0:
             break
+        # Generated crops (rotation close-ups, grid reflows) are not built
+        # through _resize_for_ocr, so a few of them used to run on tens of
+        # megapixels — minutes of small-deployment CPU per pass. Bound every
+        # variant to the same budget a normal photo costs.
+        if variant.width * variant.height > MAX_OCR_SOURCE_PIXELS:
+            variant = _resize_for_ocr(variant)
         try:
             result = _read_variant(pytesseract, variant, mode, timeout=min(OCR_PASS_TIMEOUT, remaining))
         except RuntimeError as error:
