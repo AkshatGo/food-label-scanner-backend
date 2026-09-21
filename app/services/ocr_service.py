@@ -14,7 +14,6 @@ The engine is swappable without touching the pipeline.
 """
 
 import os
-import re
 from io import BytesIO
 from time import monotonic
 
@@ -27,8 +26,7 @@ os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 import numpy
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
-
-from .table_image import row_strips, table_variants
+from .table_image import table_variants
 
 try:  # optional hardening: headless build keeps Docker slim
     import cv2
@@ -173,22 +171,6 @@ def _adaptive_threshold_variant(pil_image):
     return _to_pil(binary)
 
 
-def _min_channel_variant(pil_image):
-    """Recover WHITE print on a saturated background (red/orange/green packs)
-    WITHOUT a ruled grid — table reflow needs grid lines to detect, this
-    class has none. The per-pixel channel minimum maps saturated hues
-    (high in one channel, low in others) toward dark while white print stays
-    bright; a top-hat transform then extracts bright-on-dark strokes at any
-    background level (an adaptive threshold saturates here: the whole dark
-    background reads as "above local mean"). Returns dark-ink-on-paper."""
-    array = numpy.asarray(pil_image.convert("RGB")).astype(numpy.uint8)
-    ink = array.min(axis=2)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
-    tophat = cv2.morphologyEx(ink, cv2.MORPH_TOPHAT, kernel)
-    _, binary = cv2.threshold(tophat, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    return Image.fromarray(255 - binary, mode="L")  # dark ink on white paper
-
-
 def _prepare_variants(image):
     """Build tone and adaptive variants within the deployment's pixel budget."""
     image = _resize_for_ocr(image)
@@ -214,24 +196,7 @@ def _prepare_variants(image):
         variants.append(ImageEnhance.Contrast(sharpened).enhance(1.8))
     if cv2 is not None:
         variants.append(_adaptive_threshold_variant(image))
-        variants.append(_flat_field_variant(image))
-        variants.append(_min_channel_variant(image))
     return variants
-
-
-def _flat_field_variant(pil_image):
-    """Divide out smooth illumination gradients (premium packs, curved packs,
-    shadowed corners): divide by a heavily blurred background estimate so
-    print contrast is restored evenly from top to bottom, then Otsu-binariaze."""
-    gray = cv2.cvtColor(_to_cv(ImageOps.grayscale(pil_image)), cv2.COLOR_BGR2GRAY)
-    background = cv2.morphologyEx(
-        gray, cv2.MORPH_CLOSE,
-        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (61, 61)),
-    )
-    background = cv2.GaussianBlur(background, (0, 0), 25)
-    normalized = cv2.divide(gray, background, scale=255)
-    _, binary = cv2.threshold(normalized, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    return _to_pil(binary)
 
 
 def _read_variant(pytesseract, image, mode, timeout=OCR_PASS_TIMEOUT):
@@ -281,63 +246,20 @@ def _candidate_score(candidate):
     text = nlp_reconstruct(candidate["text"])["human_readable_text"]
     fields = len(extract_nutrition(text)["values"])
     confidence = candidate["confidence"] or 0
-    return confidence + min(fields, 8) * 5 + min(candidate["word_count"], 40) * 0.2
-
-
-_CORE_PANEL_FIELDS = {
-    "energy_kcal", "protein_g", "carbohydrate_g", "total_sugar_g",
-    "total_fat_g", "saturated_fat_g", "sodium_mg",
-}
-
-
-def _candidate_score(candidate):
-    from .nlp_cleanup import nlp_reconstruct
-    from .nutrition_extractor import extract_nutrition
-
-    text = nlp_reconstruct(candidate["text"])["human_readable_text"]
-    values = extract_nutrition(text)["values"]
-    # Core panel rows dominate: a complete-but-slightly-noisier read must
-    # beat a cleaner read that silently lost bottom rows to shading —
-    # raw confidence cannot be allowed to choose a truncated panel.
-    core = len(_CORE_PANEL_FIELDS & set(values))
-    confidence = candidate["confidence"] or 0
-    return core * 20 + confidence + min(len(values), 8) * 5 + min(candidate["word_count"], 40) * 0.2
+    # A coherent nutrition panel is more useful than a slightly higher
+    # confidence reading from the front of the packet. This matters when a
+    # phone supplies a sideways back photo and both faces are OCR'd.
+    return confidence + min(fields, 12) * 40 + min(candidate["word_count"], 40) * 0.2
 
 
 def _has_readable_panel(candidate):
     from .nlp_cleanup import nlp_reconstruct
     from .nutrition_extractor import extract_nutrition
 
-    nutrition = extract_nutrition(nlp_reconstruct(candidate["text"])["human_readable_text"])
-    # Count core FSSAI panel fields only: added_sugar or vitamins must not
-    # satisfy the minimum while a core row (e.g. sodium) is still missing —
-    # that premature exit is exactly how rows get dropped.
-    return (len(_CORE_PANEL_FIELDS & set(nutrition["values"])) >= 6
-            and not nutrition["needs_review"])
-
-
-_PANEL_HEADING_RE = re.compile(
-    r"nutritional\s+(?:information|facts)|nutrition\s+(?:information|facts)"
-    r"|per\s+100\s*(?:g|ml)\b", re.IGNORECASE)
-
-
-def _panel_incomplete(candidate):
-    """True when a panel heading is present but core rows are still missing."""
-    from .nlp_cleanup import nlp_reconstruct
-    from .nutrition_extractor import extract_nutrition
-
-    if not _PANEL_HEADING_RE.search(candidate["text"]):
+    if (candidate["confidence"] or 0) < 60:
         return False
     nutrition = extract_nutrition(nlp_reconstruct(candidate["text"])["human_readable_text"])
-    return len(_CORE_PANEL_FIELDS & set(nutrition["values"])) < 6
-
-
-def _core_field_count(candidate):
-    from .nlp_cleanup import nlp_reconstruct
-    from .nutrition_extractor import extract_nutrition
-
-    nutrition = extract_nutrition(nlp_reconstruct(candidate["text"])["human_readable_text"])
-    return len(_CORE_PANEL_FIELDS & set(nutrition["values"]))
+    return len(nutrition["values"]) >= 6 and not nutrition["needs_review"]
 
 
 def extract_text(image_bytes: bytes) -> dict:
@@ -363,27 +285,32 @@ def extract_text(image_bytes: bytes) -> dict:
     last_timeout = None
 
     def attempts():
-        # Ruled nutrition tables (white-on-color print) first. Row strips:
-        # many small OCR calls, each cheap enough to finish on a throttled
-        # CPU where one big mosaic call risks the pass timeout; joined into
-        # a single coherent candidate so rows keep their order.
-        strips = list(row_strips(image, cv2))
-        for strip in strips:
-            yield strip, 6, True
         for table in table_variants(image, cv2):
-            yield table, 6, False
+            yield table, 6
+        # Mobile cameras may deliver a sideways image without EXIF metadata.
+        # Detect the ruled table after rotating too; grid geometry is otherwise
+        # horizontal/vertical in the wrong coordinate system.
+        for angle in (90, 270, 180):
+            rotated = image.rotate(angle, expand=True)
+            for table in table_variants(rotated, cv2):
+                yield table, 6
+            # Most mobile back photos place the table in the central band;
+            # isolate that band so artwork and cooking instructions do not
+            # drown the nutrient rows.
+            width, height = rotated.size
+            close = rotated.crop((int(width * .30), int(height * .06),
+                                  int(width * .76), int(height * .76)))
+            close = close.resize((close.width * 3, close.height * 3), Image.Resampling.LANCZOS)
+            yield close, 6
         for variant in _prepare_variants(image):
-            yield variant, 6, False
+            yield variant, 6
         # Rotations also cover mobile clients that strip EXIF orientation.
         gray = ImageOps.grayscale(_resize_for_ocr(image))
         for angle in (90, 270, 180):
-            yield gray.rotate(angle, expand=True), 6, False
-        yield gray, 11, False  # scattered front-of-pack text
+            yield gray.rotate(angle, expand=True), 6
+        yield gray, 11  # scattered front-of-pack text
 
-    strip_parts = []
-    strip_confidences = []
-    strip_candidate_added = False
-    for variant, mode, is_strip in attempts():
+    for variant, mode in attempts():
         remaining = deadline - monotonic()
         if remaining <= 0:
             break
@@ -394,53 +321,14 @@ def extract_text(image_bytes: bytes) -> dict:
                 raise
             last_timeout = error
             continue
-        if is_strip:
-            if result["word_count"] >= 1:
-                strip_parts.append(result["text"])
-                strip_confidences.append(result["confidence"] or 0)
-                # The joined strips are exactly one coherent table reading —
-                # strong rows can end the whole pass loop early.
-                if len(strip_parts) >= 4 and _has_readable_panel({
-                    "text": "\n".join(strip_parts), "confidence": 80,
-                }):
-                    candidates.append({
-                        "text": "\n".join(strip_parts),
-                        "confidence": round(sum(strip_confidences) / len(strip_confidences), 2),
-                        "word_count": sum(len(t.split()) for t in strip_parts),
-                    })
-                    strip_candidate_added = True
-                    break
-            continue
         if result["word_count"] >= 2:
             candidates.append(result)
-            if _has_readable_panel(result):
-                # Panel complete: skip the remaining fallback passes.
-                break
-            # A panel heading seen on ANY candidate with core rows still
-            # missing keeps the rescue variants (adaptive threshold and
-            # flat-field handle gradient lighting that silences bottom
-            # rows) running — accuracy beats latency for a degraded panel.
-            # The heading often gets cropped away while rows survive, so
-            # evidence is tracked across all candidates, not this one.
-            heading_seen = any(
-                _PANEL_HEADING_RE.search(candidate["text"])
-                for candidate in candidates
-            )
-            strong = (
+            if (
                 result["word_count"] >= EARLY_EXIT_WORDS
                 and (result["confidence"] or 0) >= EARLY_EXIT_CONFIDENCE
-            )
-            if strong and not (heading_seen and _core_field_count(result) < 6):
+            ) or _has_readable_panel(result):
+                # Strong first read: skip the remaining fallback passes.
                 break
-
-    if strip_parts and not strip_candidate_added:
-        # Every strip read but the panel gate never fired (partial table):
-        # the joined strips are still one coherent reading — use them.
-        candidates.append({
-            "text": "\n".join(strip_parts),
-            "confidence": round(sum(strip_confidences) / len(strip_confidences), 2),
-            "word_count": sum(len(t.split()) for t in strip_parts),
-        })
 
     if not candidates:
         if last_timeout is not None:

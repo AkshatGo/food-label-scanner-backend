@@ -3,12 +3,8 @@
 import re
 
 OCR_FIXES = (
-    # Dabur Glucoplus-C real-scan class: condensed print misreads.
     (r"\bPer\s*[1Itl][0Oo]{2}\s*g\b", "Per 100g"),
     (r"\bAdgded\s+Sugars\b|\bAgded\s+Sugars\b", "Added Sugars"),
-    # Older Debian Tesseract builds systematically mangle these on small print.
-    (r"\bEner(?:ay|fy|ay|y)\b", "Energy"),
-    (r"\b(\d+(?:\.\d+)?)\s+kea?l\b", r"\1 kcal"),
     (r"\bProtesn\b|\bProtien\b", "Protein"),
     (r"\bCarboydrate\b|\bCarbohydrat\b", "Carbohydrate"),
     (r"\bTrane\s+Fat\b", "Trans Fat"),
@@ -43,8 +39,7 @@ def clean_text(raw_text: str) -> str:
     for pattern, replacement in OCR_FIXES:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
     text = text.replace("–", "-").replace("—", "-")
-    # Letter O is only repaired in an explicit nutrient's zero-with-unit slot
-    # ("Protein Og" -> "Protein 0 g"); a blanket O->0 would corrupt words.
+    # Letter O is only repaired in an explicit nutrient's zero-with-unit slot.
     text = re.sub(r"(?im)^(\s*(?:protein|total fat|trans fat|saturated fat)\s+)O\s*(g|mg)\b",
                   r"\g<1>0 \2", text)
     text = re.sub(r"[ \t]+", " ", text)

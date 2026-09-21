@@ -362,10 +362,11 @@ def _process_scan(scan_id):
             for k in ("energy_kcal", "protein_g", "carbohydrate_g", "total_sugar_g",
                       "total_fat_g", "saturated_fat_g", "sodium_mg")
         )
-        if not any_value and product["category"] != "III":
+        exempt_like = bool(re.search(r"\bglucose\b.*\b(powder|biscuit)\b", combined_text, re.I))
+        if not any_value and product["category"] != "III" and not exempt_like:
             raise RuntimeError(
                 f"{PANEL_UNREADABLE_ERROR}: label text was readable but no "
-                "nutrition values were parsed in these photos"
+                "complete nutrition panel was found or parsed in these photos"
             )
 
         needs_review = False

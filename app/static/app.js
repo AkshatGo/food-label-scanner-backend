@@ -547,6 +547,14 @@ const nutrients = [
 function value(v, unit = "") {
   return v == null ? "Not read" : `${esc(v)} ${unit}`;
 }
+function nutritionBasis(product) {
+  const extraction = product.nutrition_extraction || {};
+  const unit = extraction.basis_unit;
+  if (extraction.basis === "unknown" || !["g", "ml"].includes(unit)) {
+    return "Measurement basis not confirmed";
+  }
+  return `Per 100 ${unit} · ${extraction.normalized_to_per_100 ? "converted from the declared serving" : "as declared on the label"}`;
+}
 $("#compareForm").onsubmit = async (event) => {
   event.preventDefault();
   $("#compareError").textContent = "";

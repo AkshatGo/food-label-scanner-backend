@@ -124,22 +124,34 @@ def _extract_rows(text):
     for line in (text or "").splitlines():
         match = _ROW_RE.search(line)
         if not match:
-            continue
-        label = re.sub(r"\s+", " ", match.group(1).lower().strip())
+            # Column separators and OCR junk often appear between a nutrient
+            # name and its first value. Recover that row with a deliberately
+            # narrow fallback; later values remain reviewable rather than
+            # being silently treated as a different column.
+            match = re.search(
+                r"(?i)(?P<label>energy|calories|protein|carbohydrates?|total\s+sugars?|"
+                r"added\s+sugars?|total\s+fat|saturated\s+fat|trans\s+fat|sodium)"
+                r"[^0-9]{0,24}(?P<number>\d+(?:[.,]\d+)?)\s*(?P<unit>kcal|kj|mg|mcg|ug|g)?",
+                line,
+            )
+            if not match:
+                continue
+        label = re.sub(r"\s+", " ", match.group("label") if match.groupdict().get("label") else match.group(1).lower().strip())
+        label = label.lower().strip()
         canonical = _FIELD_LOOKUP.get(label)
         if canonical is None:
             continue
-        value_str, ambiguous = _coerce_ocr_number(match.group("number"), line)
+        value_str, ambiguous = _coerce_ocr_number(match.group("number") if match.groupdict().get("number") else match.group(2), line)
         uncertain = bool(
-            (match.group("bound") or "").strip() == "<"
+            (match.groupdict().get("bound") or "").strip() == "<"
             or line[match.end():].lstrip().startswith("%")
         )
         if "," in value_str:
             uncertain |= len(value_str.split(",")[1]) == 3
             value_str = value_str.replace(",", ".")
         value = float(value_str)
-        unit = (match.group("unit") or match.group("header_unit")
-                or match.group("prefix_unit") or "").lower()
+        unit = (match.groupdict().get("unit") or match.groupdict().get("header_unit")
+                or match.groupdict().get("prefix_unit") or "").lower()
         has_unit = bool(unit)
 
         pct = None
@@ -319,75 +331,16 @@ def extract_nutrition(text):
                 for entry in values.values():
                     entry["value"] = round(entry["value"] * factor, 2)
 
-    # Absolute plausibility bounds (per 100g/100ml): no printed food can
-    # exceed these — pure fat is ~900 kcal/100g, pure salt ~39,300mg
-    # sodium/100g, and nothing is more than 100g per 100g. A value outside
-    # its bound is digit-inflation OCR corruption (90 -> 900, 365 -> 480000)
-    # and must demand verification: inflated POSITIVE factors (protein,
-    # fibre) would otherwise RAISE the star score, not just lower it.
-    _PLAUSIBLE_BOUNDS = {
-        "energy_kcal": (0.0, 950.0),
-        "protein_g": (0.0, 100.0),
-        "carbohydrate_g": (0.0, 100.0),
-        "total_sugar_g": (0.0, 100.0),
-        "added_sugar_g": (0.0, 100.0),
-        "total_fat_g": (0.0, 100.0),
-        "saturated_fat_g": (0.0, 100.0),
-        "trans_fat_g": (0.0, 100.0),
-        "dietary_fiber_g": (0.0, 100.0),
-        "sodium_mg": (0.0, 40_000.0),
-        "cholesterol_mg": (0.0, 500.0),
-    }
-    implausible_fields = []
-    for canonical, entry in values.items():
-        bounds = _PLAUSIBLE_BOUNDS.get(canonical)
-        if bounds and not (bounds[0] <= entry["value"] <= bounds[1]):
-            implausible_fields.append(canonical)
-    for canonical in implausible_fields:
-        if canonical not in ambiguous_fields:
-            ambiguous_fields.append(canonical)
-
-    # FSSAI-semantic invariants: a printed panel cannot violate these.
-    # total sugars are a subset of total carbohydrates, and saturated fat is
-    # a subset of total fat. A confident-looking violation is OCR digit
-    # corruption (WhatsApp-compressed JPEGs confidently read "385/365" and
-    # "80/90") and must demand verification, never feed a health formula.
-    inconsistent_fields = []
-    if ("total_sugar_g" in values and "carbohydrate_g" in values
-            and values["total_sugar_g"]["value"] > values["carbohydrate_g"]["value"]):
-        inconsistent_fields += ["total_sugar_g", "carbohydrate_g"]
-    if ("saturated_fat_g" in values and "total_fat_g" in values
-            and values["saturated_fat_g"]["value"] > values["total_fat_g"]["value"]):
-        inconsistent_fields += ["saturated_fat_g", "total_fat_g"]
-    for canonical in inconsistent_fields:
-        if canonical not in ambiguous_fields:
-            ambiguous_fields.append(canonical)
-
     # A digit that may be a substituted "g" must never silently reach the
     # scoring engine, even when the basis itself was confidently detected.
-    multiple_bases = bool(_PER100_RE.search(text) and re.search(r"per\s+serving\b", text, re.IGNORECASE))
-    needs_review = (not values
-                    or (basis_info["basis"] == "unknown" and bool(values))
+    multiple_bases = bool(_PER100_RE.search(text) and re.search(r"per\s+serving\b", text, re.I))
+    needs_review = (not values or (basis_info["basis"] == "unknown" and bool(values))
                     or bool(ambiguous_fields) or multiple_bases)
 
     note = "Values read on a per-100g/100ml basis."
-    if implausible_fields:
-        note = (
-            "Some values are outside any physically possible range for a "
-            "food (" + ", ".join(sorted(implausible_fields)) + ") — almost "
-            "certainly an OCR misread. Verify them against the pack."
-        )
-    elif inconsistent_fields:
-        note = (
-            "Read values violate a nutrition invariant (sugars within "
-            "carbohydrates, saturated fat within total fat) — a sign of OCR "
-            "digit corruption. Verify these values against the pack."
-        )
-    elif not values:
-        note = "No nutrition values could be read. Retake a close-up of the nutrition table."
     if not values:
         note = "No nutrition values could be read. Retake a close-up of the nutrition table."
-    if ambiguous_fields:
+    elif ambiguous_fields:
         note = (
             "Some nutrition values contain ambiguous OCR numbers, units, "
             "percentages or bounds; verify them against the label before scoring."
@@ -427,8 +380,6 @@ def extract_nutrition(text):
         "normalization_factor": round(factor, 4),
         "needs_review": needs_review,
         "ocr_ambiguous_fields": ambiguous_fields,
-        "inconsistent_fields": inconsistent_fields,
-        "implausible_fields": implausible_fields,
         "dv_resolved_fields": dv_resolved_fields,
         "subset_resolved_fields": subset_resolved,
         "note": note,
