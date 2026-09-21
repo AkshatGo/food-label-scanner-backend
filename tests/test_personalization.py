@@ -218,10 +218,24 @@ def test_hard_triggers_still_fire_from_partial_reads():
     review scans instead of being blanket-withheld."""
     product = {"product_id": "p", "category": "I",
                "nutrition_per_100g": {"total_sugar_g": 90.0, "sodium_mg": 300.0,
-                                      "carbohydrate_g": 90.0, "dietary_fiber_g": 0.0},
+                                      "carbohydrate_g": 90.0, "dietary_fiber_g": 0.0,
+                                      "saturated_fat_g": 0.5, "total_fat_g": 1.0},
                "ingredients": [{"name": "Glucose"}, {"name": "Water"},
-                               {"name": "Vitamin C"}]}
+                              {"name": "Vitamin C"}]}
     result = personalize(product, ["diabetes", "fever"])
     verdicts = {v["condition"]: v for v in result["verdicts"]}
     assert verdicts["diabetes"]["verdict"] == "AVOID"
     assert verdicts["fever"]["verdict"] == "GOOD_FIT"  # sodium/satfat were read
+
+
+def test_partial_reads_cannot_claim_good_fit():
+    """GOOD_FIT requires the rule's decisive values to have been read."""
+    product = {"product_id": "x", "category": "I",
+               "nutrition_per_100g": {"total_sugar_g": 2.0, "sodium_mg": None,
+                                      "carbohydrate_g": None, "dietary_fiber_g": 0.0,
+                                      "saturated_fat_g": None, "total_fat_g": None},
+               "ingredients": [{"name": "Wheat"}, {"name": "Salt"}, {"name": "Water"}]}
+    result = personalize(product, ["diabetes", "fever"])
+    verdicts = {v["condition"]: v["verdict"] for v in result["verdicts"]}
+    assert verdicts["diabetes"] == "COULD_NOT_VERIFY"
+    assert verdicts["fever"] == "COULD_NOT_VERIFY"

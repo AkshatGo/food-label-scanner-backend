@@ -11,6 +11,8 @@ non-medical-advice disclaimer.
 Thresholds are per-100g/100ml, matching the INR normalization.
 """
 
+import re
+
 PERSONALIZATION_VERSION = "labellens-personalization-v1"
 
 DISCLAIMER = (
@@ -92,13 +94,15 @@ def _all_ingredient_text(product):
 def _additive_class_count(product):
     """Count INS-numbered additive entries (highly-processed indicator)."""
     ingredients = product.get("ingredients") or []
-    count = 0
-    for entry in ingredients:
-        if isinstance(entry, dict) and (entry.get("ins_number") or entry.get("resolved_from_ins")):
-            count += 1
-        elif isinstance(entry, str) and __import__("re").search(r"\bins?\s*\d{3,4}", entry, __import__("re").IGNORECASE):
-            count += 1
-    return count
+
+    def _is_additive(entry):
+        if isinstance(entry, dict):
+            return bool(entry.get("ins_number") or entry.get("resolved_from_ins"))
+        if isinstance(entry, str):
+            return bool(re.search(r"\bins?\s*\d{3,4}", entry, re.IGNORECASE))
+        return False
+
+    return sum(1 for entry in ingredients if _is_additive(entry))
 
 
 def _verdict(avoids, cautions, good_reason, unverified_reasons=None):
@@ -196,9 +200,20 @@ def _rule_diabetes(product):
             f"Carbohydrate ({carbs:g}g/100g) is high with low fibre "
             f"({fibre:g}g/100g) — expect a faster glucose response."
         )
+    unverified_partial = []
+    if carbs is None:
+        unverified_partial.append(
+            "The carbohydrate value was not read, so the high-carb/low-fibre "
+            "check could not be completed."
+        )
+    if sodium is None:
+        unverified_partial.append(
+            "The sodium value was not read, so the blood-pressure check "
+            "could not be completed."
+        )
     return _verdict(avoids, cautions,
                     "Sugar, sodium and carbohydrate load are within Diabetes caution thresholds.",
-                    unverified)
+                    unverified + unverified_partial)
 
 
 def _rule_migraine(product):
@@ -271,9 +286,20 @@ def _rule_fever(product):
             f"Contains {additive_count} additive-class (INS-numbered) "
             f"ingredients — a highly-processed indicator."
         )
+    unverified_partial = []
+    if satfat is None:
+        unverified_partial.append(
+            "The saturated-fat value was not read, so the fat-load check "
+            "could not be completed."
+        )
+    if total_fat is None:
+        unverified_partial.append(
+            "The total-fat value was not read, so the richness check could "
+            "not be completed."
+        )
     return _verdict(avoids, cautions,
                     "Sodium, fat and spice load are within fever-diet guidance thresholds.",
-                    unverified)
+                    unverified + unverified_partial)
 
 
 _RULES = {

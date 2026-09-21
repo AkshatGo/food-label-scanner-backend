@@ -146,3 +146,19 @@ def test_pipeline_review_reason_for_ambiguous_digit():
     product, _compliance = run_scan_pipeline(text, ocr_confidence=90.0)
     assert product["nutrition_extraction"]["ocr_ambiguous_fields"] == ["energy_kcal"]
     assert product["nutrition_extraction"]["needs_review"] is True
+
+
+def test_implausible_magnitudes_flag_review():
+    """OCR digit-inflation (0->000) must never silently reach the scorer."""
+    result = extract_nutrition("Per 100g\nEnergy 480000 kcal\nSodium 999999 mg\nProtein 6 g")
+    assert "energy_kcal" in result["implausible_fields"]
+    assert "sodium_mg" in result["implausible_fields"]
+    assert result["needs_review"] is True
+
+
+def test_extreme_but_real_foods_pass_plausibility_bounds():
+    """Pure oil (900 kcal) and salt-heavy sauces (sodium >5000) are real."""
+    oil = extract_nutrition("Per 100g\nEnergy 900 kcal\nTotal Fat 100 g")
+    assert oil["implausible_fields"] == []
+    sauce = extract_nutrition("Per 100g\nSodium 6000 mg")
+    assert sauce["implausible_fields"] == []
